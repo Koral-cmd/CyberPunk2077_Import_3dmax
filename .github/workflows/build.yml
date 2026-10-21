@@ -89,6 +89,17 @@ jobs:
           Get-ChildItem "$sdk\lib\x64\Release" -Filter *.lib | Select-Object -First 12 Name
           "MAXSDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: SDK facts (diagnostic)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $inc = Join-Path $env:MAXSDK "include"
+          $pat = 'ColorSpace|SetBitmapInfo|NameToIndex|IndexToId|PutMtlToMtlEditor|MTL_HW_MAT_ENABLED|MTL_TEX_DISPLAY_ENABLED|StdIDToChannel|SetCustomGamma|ActivateTexture|GNORMAL_CLASS_ID|PHYSICALMATERIAL|PHYSICAL_MATERIAL'
+          $hits = Get-ChildItem $inc -Recurse -Include *.h | Select-String -Pattern $pat | Select-Object -First 120 | ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
+          $msg = ($hits -join "%0A")
+          if ($msg.Length -gt 60000) { $msg = $msg.Substring(0, 60000) }
+          Write-Host "::notice title=sdkfacts::$msg"
+
       - name: Configure
         shell: pwsh
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCP77_BUILD_PLUGIN=ON -DCP77_BUILD_TOOLS=ON -D3DSMAX_SDK_DIR="$env:MAXSDK" -DMAX_VERSION="$env:MAX_YEAR"
