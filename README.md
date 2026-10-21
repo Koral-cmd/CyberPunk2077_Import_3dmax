@@ -1,0 +1,154 @@
+# CP2077 Import для 3ds Max
+
+Плагин на C++ для 3ds Max 2022–2027. Импортирует персонажей и оружие из Cyberpunk 2077 вместе со скелетом, скином и сборкой «оружие в руке». Вторым шагом загружает анимации: по одному клипу для проверки или все сразу на одну шкалу времени.
+
+Архивы игры читает **WolvenKit.CLI**. Плагин запускает его сам и складывает извлечённое в кэш, поэтому при повторном импорте того же персонажа CLI уже не вызывается.
+
+> **Важно.** Пакет собран и проверен только без 3ds Max и без игры. Плагин компилируется против заглушки SDK для Max 2022–2027. Вся логика (чтение JSON/GLB, сборка сущности, оси, бинд, анимации) прогоняется тестами на синтетических файлах того же формата, что пишет WolvenKit: 88 проверок, все проходят. Но сборки против настоящего Autodesk SDK и запуска на реальных файлах игры ещё не было. Первый реальный запуск — это и есть проверка. Если что-то не так, пришлите `import.log` и вывод `cp77probe` (см. ниже).
+
+---
+
+## Что нужно
+
+| | |
+|---|---|
+| 3ds Max | 2022 и новее, плюс **SDK той же версии** (ставится с Autodesk Account → Downloads) |
+| Visual Studio | 2022 или 2026 — Community или бесплатные **Build Tools** — с нагрузкой «Desktop development with C++» (Разработка классических приложений на C++) |
+| WolvenKit | **WolvenKit.CLI** 8.x (`WolvenKit.CLI.exe`, в старых версиях `cp77tools.exe`) |
+| Игра | Cyberpunk 2077 (папка с `archive\pc\content`; `ep1` подхватывается сам) |
+
+## Сборка и установка
+
+1. Распаковать архив, например в `C:\CP2077Import`.
+2. Запустить **`BUILD.bat`**. Он найдёт все установленные SDK (`C:\Program Files\Autodesk\3ds Max <год> SDK\maxsdk`), соберёт `CP2077Import.dlu` под каждый и `cp77probe.exe`, затем вызовет `INSTALL.bat`.
+   - Только одна версия: `BUILD.bat 2025`.
+   - SDK лежит в другом месте: `set MAXSDK_2025=D:\sdk\maxsdk`, затем `BUILD.bat`.
+3. `INSTALL.bat` кладёт пакет в `%APPDATA%\Autodesk\ApplicationPlugins\CP2077Import` (права администратора не нужны). Перед запуском закройте Max.
+4. В Max появится главное меню **CP2077** с пунктами *Import Character / Weapon* и *Animations*.
+
+## Первый запуск
+
+В окне **CP2077 → Import Character / Weapon**:
+
+1. **Game folder** — папка игры, **WolvenKit CLI** — путь к `WolvenKit.CLI.exe`. Затем **Save settings**.
+2. **Build index** — один раз составить список всех `.ent` и `.anims` игры. Это занимает от минуты до нескольких. Список сохраняется в `index.txt`; пересобирать его нужно только после патча игры.
+
+## Шаг 1 — персонаж и оружие
+
+1. **Character → Search** — слова через пробел, например `judy`, `gang maelstrom`, `panam`. Найти можно и без индекса, если вписать полный путь к `.ent`.
+2. Выбрать сущность. Плагин сам прочитает её внешности (**Appearance**), по умолчанию стоит `defaultAppearance`.
+3. По желанию: **Attach a weapon**, найти оружие (`w_` + название), выбрать внешность. **Slot** по умолчанию `WeaponRight`.
+4. **Import**.
+
+### Как части находят друг друга
+
+Плагин идёт по тем же связям, что и игра:
+
+```
+.ent  appearances[имя]  ──►  .app + appearanceName
+.app  внешность         ──►  компоненты (compiledData)
+                        ──►  partsValues  (ещё .ent: волосы, одежда, голова…)
+                        ──►  partsOverrides (meshAppearance / chunkMask)
+entAnimatedComponent    ──►  .rig  (+ animsets для шага 2)
+entSkinnedMeshComponent ──►  .mesh, skinning.bindName ──► его скелет
+entMeshComponent        ──►  .mesh, parentTransform ──► кость / слот
+entSlotComponent        ──►  WeaponRight → кость + смещение
+```
+
+- **Все риги персонажа** (тело, лицо, dangle-кости волос) сливаются **по именам костей** в один скелет, как это делает экспорт WolvenKit (`CombineRigs`). Поэтому меши тела, головы и волос сидят на одном скелете, и анимации тела ложатся на него без доработки.
+- **chunkMask** скрывает отключённые сабмеши. Оверрайды внешности из `.app` применяются.
+- **Оружие** — отдельный скелет. Его корневой хелпер привязан к кости слота персонажа со смещением из `entSlotComponent`. Если слота нет, оружие ищет кость с таким же именем, потом кисть (`RightHand`, `r_hand`…). Об этом будет предупреждение в отчёте.
+- **Скин** строится по именам костей. Если поза покоя рига отличается от бинд-позы меша, плагин задаёт бинд из матриц самого меша (`SetBoneTm`), чтобы сетка не «уплывала».
+
+### Что получается в сцене
+
+```
+npc_xxx            Point-хелпер скелета (user properties: rig, animsets, id)
+  Root
+    Hips ...       кости (Bone objects, auto-align выключен)
+      WeaponRight
+        w_xxx      хелпер оружия на слоте
+          Root ...
+t0_body, hair ...  меши со Skin; Multi/Sub-материал с именами материалов игры
+```
+
+Единицы: 1 м игры = 1 м в Max (по системной единице). Фиксированное значение задаётся в `UnitsPerMeter`.
+
+## Шаг 2 — анимации
+
+**CP2077 → Animations**:
+
+1. **Skeleton** — какой импортированный скелет анимировать: персонажа или оружие.
+2. **Animset** — сначала показаны animsets, которые прописаны у этого персонажа в `entAnimatedComponent`. Можно переключиться на **Search all animsets** и искать по индексу, например `walk`, `locomotion`, `pistol`. Или загрузить готовый `.anims.glb` через *Use a local .anims.glb*.
+3. **List clips** (или двойной клик по animset) — список клипов с длительностью.
+4. Загрузка:
+   - **Load selected clip** или **двойной клик** по клипу — один клип, ключи заменяются. Так удобно проверять клипы по очереди.
+   - **Load all (filtered)** — все клипы (или те, что подходят под **Filter**) подряд, через **Gap** кадров. Имена клипов стоят на **note track** хелпера скелета (ключ на начале и на конце каждого).
+   - **Back to rest pose** — снять анимацию и вернуть позу покоя.
+
+Кости сопоставляются **по именам**. Если animset не подходит скелету (совпало меньше трети анимированных костей), ничего не меняется и показывается сообщение. Root motion идёт на кость `Root`, как в экспорте WolvenKit. Аддитивные клипы WolvenKit уже переводит в абсолютные.
+
+## Импорт без игры — из проекта WolvenKit
+
+Если файлы уже извлечены в WolvenKit (GUI): **Import a WolvenKit project file (.ent.json)** или *File → Import → «Cyberpunk 2077 entity (WolvenKit)»*. Плагин ищет связанные `.app/.rig/.json` и `.glb` рядом (в `source\archive` и `source\raw` проекта), а недостающее при настроенном CLI достаёт сам.
+
+## Настройки
+
+Файл `%LOCALAPPDATA%\CP2077Import\settings.ini`:
+
+| Ключ | По умолчанию | Смысл |
+|---|---|---|
+| `GamePath` | — | папка игры |
+| `WolvenKitCli` | — | `WolvenKit.CLI.exe` |
+| `CacheDir` | `%LOCALAPPDATA%\CP2077Import\cache` | куда WolvenKit извлекает файлы |
+| `ExtraArchives` | — | моды: папки или `.archive` через `;` |
+| `UnitsPerMeter` | `0` | `0` — по системной единице Max; иначе число (100 = см) |
+| `RestPose` | `APose` | поза покоя костей: `APose` (как у мешей) или `Reference` |
+| `UseMeshBind` | `1` | брать бинд скина из меша, если он отличается от позы покоя |
+| `LodFilter` | `1` | только LOD 1 |
+| `WeldVertices` | `1` | сшивать UV-швы для гладкого шейдинга (UV не теряются) |
+| `WeaponSlot` | `WeaponRight` | слот оружия |
+| `GapFrames` / `FrameRate` | `10` / `30` | пауза между клипами / fps сцены |
+| `BoneSize` | `0.01` | толщина костей, м |
+| `ExtractTimeout` | `900` | секунд на один вызов WolvenKit |
+
+## Ограничения первой версии
+
+- **Материалы**: только имена (Multi/Sub со Standard-материалами разного цвета), без текстур.
+- **Головы с морфами** (`entMorphTargetSkinnedMeshComponent`): импортируется базовый меш (`baseMesh`) со скином, без морф-таргетов.
+- **Scale-треки** анимаций не применяются. Отчёт скажет, сколько их было.
+- **Cloth/физика** не импортируются (`entSkinnedClothComponent` пропускается).
+- **Какое оружие носит NPC** записано в TweakDB, которую плагин не читает. Оружие выбирается вручную, а собирается и цепляется к слоту автоматически.
+- Схема JSON WolvenKit бывает разной между версиями. Чтение сделано терпимым (ключи без учёта регистра, CName и пути в обоих форматах, handles и `HandleRefId`), но первые реальные файлы могут выявить отличия. `cp77probe plan …` сразу покажет, что прочиталось.
+
+## Диагностика
+
+- `%LOCALAPPDATA%\CP2077Import\import.log` — подробный лог последней операции: план сборки, каждый меш, скин, бинды.
+- `%LOCALAPPDATA%\CP2077Import\wolvenkit_last.txt` — вывод последнего вызова WolvenKit.
+- `cp77probe.exe` (в `output\` и в папке пакета) — то же ядро без Max:
+  ```
+  cp77probe index
+  cp77probe find character judy
+  cp77probe apps base\characters\entities\...\judy.ent
+  cp77probe plan base\characters\entities\...\judy.ent "" base\weapons\...\w_xxx.ent
+  cp77probe mesh C:\...\cache\base\...\body.glb
+  cp77probe clips base\animations\...\xxx.anims
+  ```
+
+## Для разработчика
+
+```
+src/core/   без SDK: JSON, glTF/GLB, JSON-схема WolvenKit, сборка сущности,
+            подготовка сцены (оси, единицы, сварка, бинды), анимации, драйвер CLI
+src/max/    слой Max: узлы, кости, Skin (ISkinImportData), материалы,
+            контроллеры/ключи, note track, интерфейс CP77Cpp для MAXScript
+scripts/    окна (MAXScript rollouts) и меню (2022–2024 menuMan, 2025+ cuiRegisterMenus)
+tools/      cp77probe
+tests/      make_fixture.py (синтетика в форматах WolvenKit + эталон, посчитанный отдельно),
+            fake_wolvenkit.py (подменяет CLI), test_core.cpp, sdkstub/ (заглушка SDK),
+            run_checks.sh (всё сразу)
+```
+
+Оси: игра (Z вверх, правая система) совпадает с Max. WolvenKit пишет glTF как `(x, z, −y)` и кватернионы как `(i, k, −j, r)`. Плагин переводит обратно подобием матриц (`core/xform.cpp`), это совпадение проверяется тестом на 200 случайных поворотах. В тесте конвейера вершина проходит скин и анимацию «как в Max» и сравнивается с эталоном, который Python считает своим кодом. Расхождение меньше 0,001 единицы.
+
+`sh tests/run_checks.sh` (Linux/WSL, g++, python3) запускает компиляцию плагина против заглушки SDK для 2022–2027, тесты ядра под ASan/UBSan и проверку скобок в MAXScript.

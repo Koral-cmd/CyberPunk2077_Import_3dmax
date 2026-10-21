@@ -1,0 +1,9 @@
+; Plain export names for 3ds Max (the functions are not extern "C").
+; No LIBRARY line: it would clash with the .dlu extension (LNK4070).
+EXPORTS
+    LibDescription   @1
+    LibNumberClasses @2
+    LibClassDesc     @3
+    LibVersion       @4
+    CanAutoDefer     @5
+    LibInitialize    @6

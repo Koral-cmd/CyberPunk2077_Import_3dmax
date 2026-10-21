@@ -1,0 +1,121 @@
+# ============================================================
+#  Builds CP2077Import.dlu for 3ds Max 2027 on a GitHub Windows
+#  runner - nothing has to be installed on your own PC.
+#
+#  Result: Actions -> the run -> Artifacts -> "CP2077Import-Max2027"
+#  (a zip; unpack it and run INSTALL.bat with 3ds Max closed).
+#
+#  The 3ds Max SDK is downloaded from Autodesk during the run. If that
+#  ever fails, start the workflow by hand (Actions -> Build plugin ->
+#  Run workflow) and paste a direct link to the SDK (.msi or .zip) into
+#  "sdk_url", or store the link once as repository secret MAXSDK_URL.
+# ============================================================
+name: Build plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sdk_url:
+        description: "Direct link to the 3ds Max 2027 SDK (.msi or .zip). Empty = find it automatically."
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      MAX_YEAR: "2027"
+      SDK_URL_INPUT: ${{ github.event.inputs.sdk_url }}
+      SDK_URL_SECRET: ${{ secrets.MAXSDK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the 3ds Max SDK
+        shell: pwsh
+        run: |
+          $year = $env:MAX_YEAR
+          $urls = [System.Collections.Generic.List[string]]::new()
+          foreach ($u in @($env:SDK_URL_INPUT, $env:SDK_URL_SECRET)) { if ($u) { $urls.Add($u.Trim()) } }
+
+          # Links on Autodesk's developer pages (JSON on the page escapes "/" as "\/").
+          foreach ($page in @("https://aps.autodesk.com/developer/overview/3ds-max-api",
+                              "https://www.autodesk.com/developer-network/platform-technologies/3ds-max")) {
+            try {
+              $html = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 $page).Content -replace '\\/', '/' -replace '\\u0026', '&'
+              foreach ($m in [regex]::Matches($html, 'https?://[^"''\s<>()]+')) {
+                $u = $m.Value
+                if ($u -match $year -and $u -match '(?i)sdk' -and $u -match '(?i)\.(msi|zip)(\?|$)') { $urls.Add($u) }
+              }
+            } catch { Write-Host "page $page : $($_.Exception.Message)" }
+          }
+
+          # The usual file names on Autodesk's developer download bucket.
+          foreach ($host_ in @("https://autodesk-adn-transfer.s3-us-west-2.amazonaws.com", "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com")) {
+            $base = "$host_/ADN%20Extranet/M%26E/Max/Autodesk%203ds%20Max%20$year"
+            foreach ($f in @("SDK_3dsMax$year.msi", "SDK_3dsMax.msi", "3dsMax${year}_SDK.msi", "3dsMax$year`_SDK.zip", "SDK_3dsMax$year.zip")) {
+              $urls.Add("$base/$f"); $urls.Add("$base/SDK/$f")
+            }
+          }
+
+          $file = $null
+          foreach ($u in ($urls | Select-Object -Unique)) {
+            $ext = if ($u -match '(?i)\.zip(\?|$)') { ".zip" } else { ".msi" }
+            $out = Join-Path $env:RUNNER_TEMP "maxsdk$ext"
+            try {
+              Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri $u -OutFile $out
+              $size = (Get-Item $out).Length
+              Write-Host "OK   $u  ($([math]::Round($size/1MB,1)) MB)"
+              if ($size -gt 5MB) { $file = $out; break }
+            } catch { Write-Host "miss $u" }
+          }
+          if (-not $file) {
+            Write-Host "::error::3ds Max $year SDK not found. Run the workflow by hand and paste a direct SDK link into 'sdk_url' (Autodesk Account -> Downloads, or the 3ds Max developer page)."
+            exit 1
+          }
+
+          $dest = "C:\maxsdk_x"
+          if ($file.EndsWith(".zip")) {
+            Expand-Archive -Path $file -DestinationPath $dest -Force
+          } else {
+            $p = Start-Process msiexec.exe -ArgumentList "/a `"$file`" /qn TARGETDIR=`"$dest`"" -Wait -PassThru
+            Write-Host "msiexec exit $($p.ExitCode)"
+          }
+          $maxh = Get-ChildItem $dest -Recurse -Filter max.h -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq "include" } | Select-Object -First 1
+          if (-not $maxh) { Write-Host "::error::the SDK download has no include\max.h"; Get-ChildItem $dest -Recurse -Depth 3 | Select-Object -First 60 FullName; exit 1 }
+          $sdk = $maxh.Directory.Parent.FullName
+          Write-Host "SDK at $sdk"
+          Get-ChildItem "$sdk\lib\x64\Release" -Filter *.lib | Select-Object -First 12 Name
+          "MAXSDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCP77_BUILD_PLUGIN=ON -DCP77_BUILD_TOOLS=ON -D3DSMAX_SDK_DIR="$env:MAXSDK" -DMAX_VERSION="$env:MAX_YEAR"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Core tests (Windows build of the core)
+        shell: pwsh
+        run: |
+          python tests/make_fixture.py fixture
+          ./build/Release/test_core.exe fixture
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $d = "dist/CP2077Import"
+          New-Item -ItemType Directory -Force "$d/output/$env:MAX_YEAR" | Out-Null
+          Copy-Item "build/bin/CP2077Import.dlu" "$d/output/$env:MAX_YEAR/"
+          Copy-Item "build/Release/cp77probe.exe" "$d/output/"
+          Copy-Item -Recurse package, scripts "$d/"
+          Copy-Item INSTALL.bat, README.md "$d/"
+          Get-ChildItem -Recurse $d | Select-Object FullName, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CP2077Import-Max${{ env.MAX_YEAR }}
+          path: dist/
+          if-no-files-found: error
