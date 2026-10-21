@@ -10,6 +10,16 @@
 
 #include <bitmap.h>
 #include <iskin.h>
+// colour management (3ds Max 2024+): normal maps must be read as raw data
+#if MAX_RELEASE >= 26000 && defined(__has_include)
+#  if __has_include(<IColorPipelineMgr.h>)
+#    include <IColorPipelineMgr.h>
+#    define CP77_COLOR_MGMT 1
+#  elif __has_include(<ColorManagement/IColorPipelineMgr.h>)
+#    include <ColorManagement/IColorPipelineMgr.h>
+#    define CP77_COLOR_MGMT 1
+#  endif
+#endif
 #include <stdmat.h>
 
 #include <algorithm>
@@ -74,25 +84,52 @@ Color MatColor(size_t i) {
     return Color(c[0], c[1], c[2]);
 }
 
-// Normal Bump texmap (Max's GNormal)
+// Normal Bump texmap (Max's GNormal) and Physical Material
 const Class_ID kNormalBumpClass(0x243e22c6, 0x63f6a014);
+const Class_ID kPhysicalMtlClass(0x3d6b1cec, 0xdeadc001);
 
-Texmap* MakeBitmap(const std::string& file, bool linear, bool alphaAsMono) {
+// a parameter by its script name, in any of the object's parameter blocks
+template <class T> bool SetParam(Animatable* a, const MCHAR* name, T value) {
+    if (!a) return false;
+    for (int i = 0; i < a->NumParamBlocks(); ++i) {
+        IParamBlock2* pb = a->GetParamBlock(i);
+        if (!pb || !pb->GetDesc()) continue;
+        const int idx = pb->GetDesc()->NameToIndex(name);
+        if (idx < 0) continue;
+        return pb->SetValue(pb->IndextoID(idx), 0, value) != FALSE;
+    }
+    return false;
+}
+
+Texmap* MakeBitmap(const std::string& file, bool raw, bool alphaAsMono) {
     BitmapTex* bt = NewDefaultBitmapTex();
     if (!bt) return nullptr;
     const MSTR f = M(file);
-    if (linear) {   // normal maps are data, not colour: no gamma
+    bt->SetMapName(f.data());
+    if (raw) {   // normal maps are data, not colour: no gamma, "Raw" colour space
         BitmapInfo bi;
         bi.SetName(f.data());
         bi.SetCustomFlag(BMM_CUSTOM_GAMMA);
         bi.SetCustomGamma(1.0f);
+#ifdef CP77_COLOR_MGMT
+        using namespace MaxSDK::ColorManagement;
+        IColorPipelineMgr* cpm = IColorPipelineMgr::GetInstance();
+        const MSTR data = (cpm && cpm->Settings()) ? cpm->Settings()->GetDataColorSpaceName() : MSTR(_T("Raw"));
+        bi.SetRequestedColorSpace(data, ColSpaceSource::User);
+#endif
         bt->SetBitmapInfo(bi);
     }
-    bt->SetMapName(f.data());
     bt->SetName(M(FileStem(file)));
     bt->SetAlphaSource(alphaAsMono ? ALPHA_FILE : ALPHA_NONE);
     bt->SetAlphaAsMono(alphaAsMono ? TRUE : FALSE);
     return bt;
+}
+
+Texmap* MakeNormal(Interface* ip, const std::string& file) {
+    Texmap* n = MakeBitmap(file, true, false);
+    Texmap* nb = static_cast<Texmap*>(ip->CreateInstance(TEXMAP_CLASS_ID, kNormalBumpClass));
+    if (nb && n) { nb->SetSubTexmap(0, n); return nb; }
+    return n;
 }
 
 struct MatSlot {
@@ -100,62 +137,76 @@ struct MatSlot {
     MaterialTextures tex;
 };
 
+// Physical Material (what Max 2027 shows best in the viewport); Standard as fallback
+Mtl* TexturedMaterial(Interface* ip, const MatSlot& slot) {
+    Mtl* pm = static_cast<Mtl*>(ip->CreateInstance(MATERIAL_CLASS_ID, kPhysicalMtlClass));
+    if (pm) {
+        pm->SetName(M(slot.name));
+        Texmap* d = MakeBitmap(slot.tex.diffuse, false, false);
+        const bool ok = SetParam(pm, _T("base_color_map"), d);
+        if (ok) {
+            SetParam(pm, _T("roughness"), 0.55f);
+            if (!slot.tex.normal.empty()) {
+                SetParam(pm, _T("bump_map"), MakeNormal(ip, slot.tex.normal));
+                SetParam(pm, _T("bump_map_amt"), 1.0f);
+            }
+            if (!slot.tex.opacity.empty()) SetParam(pm, _T("cutout_map"), MakeBitmap(slot.tex.opacity, false, true));
+            pm->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
+            pm->SetMtlFlag(MTL_HW_MAT_ENABLED);      // realistic display: normal map and cut-out in the viewport
+            if (d) { d->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED); ip->ActivateTexture(d, pm); }
+            return pm;
+        }
+        Log("Physical Material parameters not found - using Standard");
+    }
+    StdMat2* m = NewDefaultStdMat();
+    if (!m) return nullptr;
+    m->SetName(M(slot.name));
+    m->SetDiffuse(Color(1.0f, 1.0f, 1.0f), 0);
+    Texmap* d = MakeBitmap(slot.tex.diffuse, false, false);
+    m->SetSubTexmap(m->StdIDToChannel(ID_DI), d);
+    m->EnableMap(ID_DI, TRUE);
+    if (!slot.tex.normal.empty()) {
+        m->SetSubTexmap(m->StdIDToChannel(ID_BU), MakeNormal(ip, slot.tex.normal));
+        m->SetTexmapAmt(ID_BU, 1.0f, 0);
+        m->EnableMap(ID_BU, TRUE);
+    }
+    if (!slot.tex.opacity.empty()) {
+        m->SetSubTexmap(m->StdIDToChannel(ID_OP), MakeBitmap(slot.tex.opacity, false, true));
+        m->EnableMap(ID_OP, TRUE);
+    }
+    m->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
+    if (d) { d->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED); ip->ActivateTexture(d, m); }
+    return m;
+}
+
 Mtl* MakeMaterial(Interface* ip, const std::string& name, const std::vector<MatSlot>& subs, const std::string& keyPrefix,
                   std::map<std::string, Mtl*>& cache, size_t& textured) {
-    auto std_ = [&](const MatSlot& slot) -> Mtl* {
+    auto one = [&](const MatSlot& slot) -> Mtl* {
+        const bool tex = !slot.tex.diffuse.empty();
         // the same name means different textures in different meshes ("decals_all")
-        const std::string key = (slot.tex.diffuse.empty() && slot.tex.normal.empty() ? std::string() : keyPrefix + "|") + slot.name;
+        const std::string key = (tex ? keyPrefix + "|" : std::string()) + slot.name;
         auto it = cache.find(key);
         if (it != cache.end()) return it->second;
-        StdMat2* m = NewDefaultStdMat();
-        if (!m) return nullptr;
-        m->SetName(M(slot.name));
-        m->SetDiffuse(MatColor(cache.size()), 0);
-        Texmap* shown = nullptr;
-        if (!slot.tex.diffuse.empty()) {
-            if (Texmap* d = MakeBitmap(slot.tex.diffuse, false, false)) {
-                m->SetDiffuse(Color(1.0f, 1.0f, 1.0f), 0);
-                m->SetSubTexmap(ID_DI, d);
-                m->EnableMap(ID_DI, TRUE);
-                shown = d;
-            }
-        }
-        if (!slot.tex.normal.empty()) {
-            Texmap* nb = static_cast<Texmap*>(ip->CreateInstance(TEXMAP_CLASS_ID, kNormalBumpClass));
-            Texmap* n = MakeBitmap(slot.tex.normal, true, false);
-            if (nb && n) {
-                nb->SetSubTexmap(0, n);
-                m->SetSubTexmap(ID_BU, nb);
-                m->SetTexmapAmt(ID_BU, 1.0f, 0);
-                m->EnableMap(ID_BU, TRUE);
-            } else if (n) {
-                m->SetSubTexmap(ID_BU, n);
-                m->EnableMap(ID_BU, TRUE);
-            }
-        }
-        if (!slot.tex.opacity.empty()) {
-            if (Texmap* o = MakeBitmap(slot.tex.opacity, false, true)) {
-                m->SetSubTexmap(ID_OP, o);
-                m->EnableMap(ID_OP, TRUE);
-            }
-        }
-        if (shown) {
-            ++textured;
-            m->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
-            shown->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
-            ip->ActivateTexture(shown, m);
+        Mtl* m = nullptr;
+        if (tex) { m = TexturedMaterial(ip, slot); if (m) ++textured; }
+        if (!m) {
+            StdMat2* s = NewDefaultStdMat();
+            if (!s) return nullptr;
+            s->SetName(M(slot.name));
+            s->SetDiffuse(MatColor(cache.size()), 0);
+            m = s;
         }
         cache[key] = m;
         return m;
     };
-    if (subs.size() == 1) return std_(subs[0]);
+    if (subs.size() == 1) return one(subs[0]);
     MultiMtl* mm = NewDefaultMultiMtl();
     if (!mm) return nullptr;
     mm->SetName(M(name));
     mm->SetNumSubMtls(static_cast<int>(subs.size()));
     for (size_t i = 0; i < subs.size(); ++i) {
         MSTR sub = M(subs[i].name);
-        mm->SetSubMtlAndName(static_cast<int>(i), std_(subs[i]), sub);
+        mm->SetSubMtlAndName(static_cast<int>(i), one(subs[i]), sub);
     }
     return mm;
 }
@@ -311,6 +362,7 @@ std::wstring BuildScene(const ScenePlan& plan) {
     TextureOptions topt;
     topt.outDir = JoinPath(st.cacheDir(), "_cp77_textures");
     topt.flipGreen = st.getBool(Settings::NormalFlipGreen, false);
+    const bool decals = st.getBool(Settings::Decals, true);
     Log("units per metre %.4f, LOD %d, textures %s", opt.unitsPerMeter, opt.lod, textures ? "on" : "off");
 
     PrepScene scene;
@@ -374,6 +426,10 @@ std::wstring BuildScene(const ScenePlan& plan) {
     std::map<std::string, MeshData> loaded;
     std::map<std::string, MaterialFile> matFiles;
     std::map<std::string, MaterialTextures> texCache;   // per material file + name
+    std::vector<Mtl*> editorMtls;
+    std::vector<std::string> texReport;
+    int maxLod = 1;
+    size_t decalParts = 0;
     for (size_t mi = 0; mi < plan.meshes.size(); ++mi) {
         const PlanMesh& pm = plan.meshes[mi];
         if (pm.glb.empty()) { ++failed; continue; }
@@ -395,6 +451,8 @@ std::wstring BuildScene(const ScenePlan& plan) {
         }
         PrepOptions mopt = opt;
         mopt.appearance = std::max(0, mf->second.appearanceIndex(pm.appearance));
+        if (!decals)
+            for (const auto& md : mf->second.materials) if (md.isDecal()) mopt.skipMaterials.push_back(md.name);
         PrepMesh prep;
         std::string err;
         if (!PrepMeshFrom(plan, mi, it->second, mopt, scene, prep, err)) { Log("mesh %s: %s", pm.component.c_str(), err.c_str()); report += err + "\n"; continue; }
@@ -437,7 +495,10 @@ std::wstring BuildScene(const ScenePlan& plan) {
             slots.push_back(std::move(slot));
         }
         Mtl* mtl = MakeMaterial(ip, prep.name + "_mtl", slots, pm.glb, mtlCache, textured);
-        if (mtl) node->SetMtl(mtl);
+        if (mtl) { node->SetMtl(mtl); if (std::find(editorMtls.begin(), editorMtls.end(), mtl) == editorMtls.end()) editorMtls.push_back(mtl); }
+        if (!texNotes.empty()) texReport.push_back(prep.name + ": " + texNotes);
+        maxLod = std::max(maxLod, prep.lodsAvailable.empty() ? 1 : prep.lodsAvailable.back());
+        if (prep.chunksSkipped) decalParts += prep.chunksSkipped;
         Log("mesh %-32s LOD %d (has %s), appearance #%d, materials: %s%s", prep.name.c_str(), prep.lod,
             Join([&] { std::vector<std::string> v; for (int l : prep.lodsAvailable) v.push_back(std::to_string(l)); return v; }(), ",").c_str(),
             mopt.appearance, Join(prep.materials, ", ").c_str(), texNotes.empty() ? "" : (" | " + texNotes).c_str());
@@ -463,7 +524,15 @@ std::wstring BuildScene(const ScenePlan& plan) {
                               boneCount, made, skinned, tris);
     if (failed) head += Format(", %zu mesh(es) missing", failed);
     if (textures) head += Format(", %zu textured material(s)", textured);
-    if (opt.lod > 1) head += Format("\nLOD %d: %zu mesh(es) have it, %zu do not (used the nearest)", opt.lod, lighterLod, noLod);
+    if (opt.lod > 1)
+        head += Format("\nLOD %d: %zu mesh(es) have it, %zu do not (nearest used). Highest LOD in these meshes: %d", opt.lod, lighterLod, noLod, maxLod);
+    else
+        head += maxLod > 1 ? Format("\nLODs in these meshes: 1..%d", maxLod) : std::string("\nLODs: set LOD 2+ to see whether these meshes have lighter versions");
+    if (decalParts) head += Format("\n%zu decal part(s) left out", decalParts);
+    // the materials into the Material Editor slots (compact mode has 24)
+    for (size_t i = 0; i < editorMtls.size() && i < 24; ++i) ip->PutMtlToMtlEditor(editorMtls[i], static_cast<int>(i));
+    if (!editorMtls.empty()) head += Format("\n%zu material(s) put into the Material Editor slots", std::min<size_t>(editorMtls.size(), 24));
+    for (size_t i = 0; i < texReport.size() && i < 8; ++i) report += "textures " + texReport[i] + "\n";
     for (const auto& w : plan.warnings) report += "warning: " + w + "\n";
     for (const auto& w : scene.warnings) report += "warning: " + w + "\n";
     Log("%s\n%s", head.c_str(), report.c_str());

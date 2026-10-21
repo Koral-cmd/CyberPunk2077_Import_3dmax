@@ -20,6 +20,10 @@ const MaterialDef* MaterialFile::find(const std::string& name) const {
     return nullptr;
 }
 
+bool MaterialDef::isDecal() const {
+    return Lower(base + " " + tmpl).find("decal") != std::string::npos;
+}
+
 int MaterialFile::appearanceIndex(const std::string& meshAppearance) const {
     if (appearances.empty()) return -1;
     const std::string want = Lower(meshAppearance);

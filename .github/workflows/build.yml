@@ -89,25 +89,6 @@ jobs:
           Get-ChildItem "$sdk\lib\x64\Release" -Filter *.lib | Select-Object -First 12 Name
           "MAXSDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: SDK facts (diagnostic)
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $inc = Join-Path $env:MAXSDK "include"
-          $q = @(
-            @("InputColorSpaceInfo.h", '^\s*[A-Za-z]+\s*(=\s*\d+)?\s*,?\s*(//.*)?$|namespace'),
-            @("IColorPipelineMgr.h", 'GetInstance|ModeSettings|static |namespace|class '),
-            @("IModeSettings.h", 'namespace|class |GetDataColorSpaceName'),
-            @("bitmap.h", 'SetRequestedColorSpace|ValidateColorSpace|namespace ColorManagement'),
-            @("*.h", 'MTL_TEX_DISPLAY_ENABLED|MTL_HW_MAT_ENABLED|GetPrimaryMapSlot')
-          )
-          foreach ($e in $q) {
-            $hits = Get-ChildItem $inc -Recurse -Filter $e[0] | Select-String -Pattern $e[1] | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
-            $msg = ($hits -join " || ")
-            if ($msg.Length -gt 3800) { $msg = $msg.Substring(0, 3800) }
-            Write-Host "::notice title=sdk $($e[0])::$msg"
-          }
-
       - name: Configure
         shell: pwsh
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCP77_BUILD_PLUGIN=ON -DCP77_BUILD_TOOLS=ON -D3DSMAX_SDK_DIR="$env:MAXSDK" -DMAX_VERSION="$env:MAX_YEAR"

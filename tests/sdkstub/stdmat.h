@@ -20,7 +20,7 @@ public:
     virtual void SetAlphaAsMono(BOOL) {}
 };
 inline BitmapTex* NewDefaultBitmapTex() { return nullptr; }
-class StdMat2 : public StdMat {};
+class StdMat2 : public StdMat { public: long StdIDToChannel(long id) { return id; } };
 class MultiMtl : public Mtl {
 public:
     virtual void SetNumSubMtls(int) {}

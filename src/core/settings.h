@@ -27,6 +27,7 @@ public:
     static constexpr const char* Lod            = "Lod";             // 1 = full detail, 2.. = lighter (if the mesh has it)
     static constexpr const char* Textures       = "Textures";        // 1 = materials with textures
     static constexpr const char* NormalFlipGreen= "NormalFlipGreen"; // 1 = invert normal map green
+    static constexpr const char* Decals         = "Decals";          // 0 = leave decal parts out
     static constexpr const char* WeldVertices   = "WeldVertices";    // 1 = weld UV seams for smooth shading
     static constexpr const char* WeaponSlot     = "WeaponSlot";      // default slot for weapons
     static constexpr const char* GapFrames      = "GapFrames";       // between clips in "load all"

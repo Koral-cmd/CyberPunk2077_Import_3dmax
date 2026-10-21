@@ -25,7 +25,7 @@ macroScript CP2077Import_Open
         (
             global cp77ImportRoll
             try (destroyDialog cp77ImportRoll) catch ()
-            rollout cp77ImportRoll "CP2077 Import" width:540 height:800
+            rollout cp77ImportRoll "CP2077 Import" width:540 height:820
             (
                 local charPaths = #()
                 local weapPaths = #()
@@ -37,6 +37,28 @@ macroScript CP2077Import_Open
                     windows.processPostedMessages()
                 )
                 fn busy what = (report ("Working: " + what + " ..."))
+                -- dotNet list boxes: unlike "listbox" they scroll sideways for long paths
+                fn styleList lb = (
+                    lb.HorizontalScrollbar = true
+                    lb.IntegralHeight = false
+                    lb.BorderStyle = (dotNetClass "System.Windows.Forms.BorderStyle").FixedSingle
+                    local cc = dotNetClass "System.Drawing.Color"
+                    local bg = (colorMan.getColor #window) * 255
+                    local fg = (colorMan.getColor #windowText) * 255
+                    lb.BackColor = cc.FromArgb (bg[1] as integer) (bg[2] as integer) (bg[3] as integer)
+                    lb.ForeColor = cc.FromArgb (fg[1] as integer) (fg[2] as integer) (fg[3] as integer)
+                )
+                fn setItems lb arr = (
+                    lb.BeginUpdate()
+                    lb.Items.Clear()
+                    for t in arr do lb.Items.Add t
+                    lb.EndUpdate()
+                )
+                fn selIndex lb = (lb.SelectedIndex + 1)
+                fn selText lb arr = (
+                    local i = lb.SelectedIndex + 1
+                    if (i >= 1 and i <= arr.count) then arr[i] else undefined
+                )
 
                 group "Setup"
                 (
@@ -52,7 +74,7 @@ macroScript CP2077Import_Open
                 (
                     edittext edCharFilter "Search" fieldWidth:390 across:2 text:"characters entities"
                     button btCharFind "Find" width:50 align:#right offset:[0,-2]
-                    listbox lbChars "" height:9
+                    dotNetControl lbChars "System.Windows.Forms.ListBox" width:510 height:125
                     dropdownlist ddCharApp "Appearance" width:510
                 )
                 group "Weapon (optional)"
@@ -60,15 +82,16 @@ macroScript CP2077Import_Open
                     checkbox cbWeapon "Attach a weapon" checked:false
                     edittext edWeapFilter "Search" fieldWidth:390 across:2 text:"w_"
                     button btWeapFind "Find" width:50 align:#right offset:[0,-2]
-                    listbox lbWeaps "" height:6
+                    dotNetControl lbWeaps "System.Windows.Forms.ListBox" width:510 height:85
                     dropdownlist ddWeapApp "Appearance" width:510
                     edittext edSlot "Slot" text:"WeaponRight" fieldWidth:160
                 )
                 group "Options"
                 (
-                    spinner spLod "LOD (1 = full detail) " range:[1,8,1] type:#integer fieldWidth:40 across:3 align:#left tooltip:"2, 3 ... = lighter meshes, when the game has them (re-exports once)"
+                    spinner spLod "LOD (1 = full) " range:[1,8,1] type:#integer fieldWidth:40 across:3 align:#left tooltip:"2, 3 ... = lighter meshes, when the game has them (re-exports once)"
                     checkbox cbTex "Textures" checked:true tooltip:"Materials with the textures WolvenKit exported (multilayer colours are baked)"
                     checkbox cbFlipG "Flip normal green" checked:false
+                    checkbox cbDecals "Decals (logos, stickers)" checked:true
                 )
                 button btImport "Import" width:220 height:32
                 button btJson "Import a WolvenKit project file (.ent.json) ..." width:300
@@ -97,7 +120,7 @@ macroScript CP2077Import_Open
                     local res = splitLines r
                     -- no index yet: a full depot path typed into the search field works too
                     if (res.count == 0 and (matchPattern filter pattern:"*.ent")) then res = #(filter)
-                    lb.items = res
+                    setItems lb res
                     res
                 )
 
@@ -110,6 +133,9 @@ macroScript CP2077Import_Open
                     spLod.value = (if lod == "" then 1 else (lod as integer))
                     cbTex.checked = (CP77Cpp.getSetting "Textures") != "0"
                     cbFlipG.checked = (CP77Cpp.getSetting "NormalFlipGreen") == "1"
+                    cbDecals.checked = (CP77Cpp.getSetting "Decals") != "0"
+                    styleList lbChars
+                    styleList lbWeaps
                     local n = CP77Cpp.indexCount()
                     lbIndex.text = (if n > 0 then (n as string + " paths indexed") else "no index yet")
                     report ("CP2077 Import " + CP77Cpp.version() + "\nSettings: " + CP77Cpp.settingsPath())
@@ -144,7 +170,7 @@ macroScript CP2077Import_Open
                     charPaths = findPaths "character" t lbChars
                     report (charPaths.count as string + " character entities")
                 )
-                on lbChars selected i do fillApps lbChars.selected ddCharApp
+                on lbChars SelectedIndexChanged sender args do fillApps (selText lbChars charPaths) ddCharApp
                 on btWeapFind pressed do (
                     weapPaths = findPaths "weapon" edWeapFilter.text lbWeaps
                     report (weapPaths.count as string + " weapon entities")
@@ -153,13 +179,16 @@ macroScript CP2077Import_Open
                     weapPaths = findPaths "weapon" t lbWeaps
                     report (weapPaths.count as string + " weapon entities")
                 )
-                on lbWeaps selected i do (
-                    cbWeapon.checked = true
-                    fillApps lbWeaps.selected ddWeapApp
+                on lbWeaps SelectedIndexChanged sender args do (
+                    if (selIndex lbWeaps) > 0 then (
+                        cbWeapon.checked = true
+                        fillApps (selText lbWeaps weapPaths) ddWeapApp
+                    )
                 )
                 on btImport pressed do (
-                    local ent = lbChars.selected
-                    local wEnt = (if cbWeapon.checked and lbWeaps.selected != undefined then lbWeaps.selected else "")
+                    local ent = selText lbChars charPaths
+                    local wSel = selText lbWeaps weapPaths
+                    local wEnt = (if cbWeapon.checked and wSel != undefined then wSel else "")
                     if ((ent == undefined or ent == "") and wEnt == "") then (report "Pick a character (and/or a weapon) first."; return ok)
                     if ent == undefined then ent = ""
                     local app = (if ddCharApp.selected != undefined then ddCharApp.selected else "")
@@ -167,6 +196,7 @@ macroScript CP2077Import_Open
                     CP77Cpp.setSetting "Lod" (spLod.value as string)
                     CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
                     CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
+                    CP77Cpp.setSetting "Decals" (if cbDecals.checked then "1" else "0")
                     busy ("importing " + ent)
                     local r = CP77Cpp.importCharacter ent app wEnt wApp edSlot.text
                     report r
@@ -176,6 +206,7 @@ macroScript CP2077Import_Open
                     CP77Cpp.setSetting "Lod" (spLod.value as string)
                     CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
                     CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
+                    CP77Cpp.setSetting "Decals" (if cbDecals.checked then "1" else "0")
                     local p = getOpenFileName caption:"Entity exported by WolvenKit (.ent.json)" types:"Entity JSON (*.ent.json)|*.ent.json|JSON (*.json)|*.json|"
                     if p != undefined then (
                         busy ("importing " + p)
@@ -219,6 +250,29 @@ macroScript CP2077Import_Anim
                     windows.processPostedMessages()
                 )
                 fn busy what = (report ("Working: " + what + " ..."))
+                local setPaths = #()
+                -- dotNet list boxes: unlike "listbox" they scroll sideways for long paths
+                fn styleList lb = (
+                    lb.HorizontalScrollbar = true
+                    lb.IntegralHeight = false
+                    lb.BorderStyle = (dotNetClass "System.Windows.Forms.BorderStyle").FixedSingle
+                    local cc = dotNetClass "System.Drawing.Color"
+                    local bg = (colorMan.getColor #window) * 255
+                    local fg = (colorMan.getColor #windowText) * 255
+                    lb.BackColor = cc.FromArgb (bg[1] as integer) (bg[2] as integer) (bg[3] as integer)
+                    lb.ForeColor = cc.FromArgb (fg[1] as integer) (fg[2] as integer) (fg[3] as integer)
+                )
+                fn setItems lb arr = (
+                    lb.BeginUpdate()
+                    lb.Items.Clear()
+                    for t in arr do lb.Items.Add t
+                    lb.EndUpdate()
+                )
+                fn selIndex lb = (lb.SelectedIndex + 1)
+                fn selText lb arr = (
+                    local i = lb.SelectedIndex + 1
+                    if (i >= 1 and i <= arr.count) then arr[i] else undefined
+                )
 
                 group "Skeleton"
                 (
@@ -230,14 +284,14 @@ macroScript CP2077Import_Anim
                     radiobuttons rbSrc labels:#("Animsets of this skeleton", "Search all animsets") default:1 columns:2
                     edittext edFilter "Search" fieldWidth:390 across:2
                     button btFind "Find" width:50 align:#right offset:[0,-2]
-                    listbox lbSets "" height:7
+                    dotNetControl lbSets "System.Windows.Forms.ListBox" width:510 height:100
                     button btLocal "Use a local .anims.glb ..." width:200
                 )
                 group "Clips"
                 (
                     button btClips "List clips" width:120 across:2
                     label lbInfo "" align:#left width:360
-                    listbox lbClips "" height:12
+                    dotNetControl lbClips "System.Windows.Forms.ListBox" width:510 height:170
                     button btOne "Load selected clip" width:160 across:3 tooltip:"Starts at the current frame of the time slider; before it the rest pose is kept. Double-click a clip does the same"
                     edittext edClipFilter "Filter" fieldWidth:110
                     button btAll "Load all (filtered)" width:160 tooltip:"All clips one after another, names on the helper's note track"
@@ -251,10 +305,11 @@ macroScript CP2077Import_Anim
                 )
                 fn showSets = (
                     if (rbSrc.state == 1) then (
-                        lbSets.items = (if (ddRig.selection >= 1 and ddRig.selection <= rigs.count) then rigs[ddRig.selection][5] else #())
+                        setPaths = (if (ddRig.selection >= 1 and ddRig.selection <= rigs.count) then rigs[ddRig.selection][5] else #())
                     ) else (
-                        lbSets.items = splitLines (CP77Cpp.search "anims" edFilter.text 800)
+                        setPaths = splitLines (CP77Cpp.search "anims" edFilter.text 800)
                     )
+                    setItems lbSets setPaths
                 )
                 fn loadRigs = (
                     rigs = #()
@@ -288,18 +343,21 @@ macroScript CP2077Import_Anim
                         total += d
                         append items (f[1] + "    (" + (formattedPrint d format:".2f") + " s)")
                     )
-                    lbClips.items = items
+                    setItems lbClips items
                     lbInfo.text = (clipNames.count as string + " clips, " + (formattedPrint total format:".1f") + " s in total")
                     report ("Animset " + setPath)
                 )
                 fn applyOne = (
-                    if (currentSet == "" or lbClips.selection < 1) then (report "List the clips and pick one."; return ok)
-                    busy ("loading " + clipNames[lbClips.selection])
-                    report (CP77Cpp.applyClip currentSet clipNames[lbClips.selection] (rigHandle()))
+                    local i = selIndex lbClips
+                    if (currentSet == "" or i < 1 or i > clipNames.count) then (report "List the clips and pick one."; return ok)
+                    busy ("loading " + clipNames[i])
+                    report (CP77Cpp.applyClip currentSet clipNames[i] (rigHandle()))
                     completeRedraw()
                 )
 
                 on cp77AnimRoll open do (
+                    styleList lbSets
+                    styleList lbClips
                     local g = CP77Cpp.getSetting "GapFrames"
                     if g != "" then spGap.value = (g as integer)
                     loadRigs()
@@ -309,14 +367,14 @@ macroScript CP2077Import_Anim
                 on rbSrc changed s do showSets()
                 on btFind pressed do (rbSrc.state = 2; showSets())
                 on edFilter entered t do (rbSrc.state = 2; showSets())
-                on lbSets doubleClicked i do listClips lbSets.selected
-                on btClips pressed do listClips lbSets.selected
+                on lbSets DoubleClick sender args do listClips (selText lbSets setPaths)
+                on btClips pressed do listClips (selText lbSets setPaths)
                 on btLocal pressed do (
                     local p = getOpenFileName caption:"Animset exported by WolvenKit (.anims.glb)" types:"Animset GLB (*.glb)|*.glb|"
                     if p != undefined then listClips p
                 )
                 on btOne pressed do applyOne()
-                on lbClips doubleClicked i do applyOne()
+                on lbClips DoubleClick sender args do applyOne()
                 on btAll pressed do (
                     if currentSet == "" then (report "List the clips first."; return ok)
                     CP77Cpp.setSetting "GapFrames" (spGap.value as string)

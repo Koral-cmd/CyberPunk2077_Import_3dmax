@@ -110,11 +110,15 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
     std::vector<const SubMesh*> parts;
     for (const auto& p : data.parts) {
         if (p.lod != useLod) continue;
+        if (!opt.skipMaterials.empty() && !p.materials.empty()) {
+            const size_t a = std::min(static_cast<size_t>(std::max(0, opt.appearance)), p.materials.size() - 1);
+            if (std::find(opt.skipMaterials.begin(), opt.skipMaterials.end(), p.materials[a]) != opt.skipMaterials.end()) { ++out.chunksSkipped; continue; }
+        }
         if (!ChunkVisible(pm.chunkMask, p.chunk)) { ++out.chunksHidden; continue; }
         parts.push_back(&p);
         ++out.chunksShown;
     }
-    if (parts.empty()) { error = out.name + ": every chunk hidden by the chunk mask"; return false; }
+    if (parts.empty()) { error = out.name + (out.chunksSkipped ? ": only decal parts (decals are off)" : ": every chunk hidden by the chunk mask"); return false; }
 
     bool weighted = false;
     for (const SubMesh* p : parts) if (p->influences > 0) weighted = true;

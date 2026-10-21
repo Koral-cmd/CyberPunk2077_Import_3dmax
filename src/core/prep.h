@@ -57,6 +57,7 @@ struct PrepMesh {
     size_t chunksShown = 0, chunksHidden = 0;
     int lod = 1;                     // LOD actually used
     std::vector<int> lodsAvailable;
+    size_t chunksSkipped = 0;        // left out by skipMaterials
 };
 
 struct PrepScene {
@@ -74,6 +75,7 @@ struct PrepOptions {
     bool useMeshBind = true;
     int lod = 1;                     // wanted LOD (1 = full detail); nearest available is used
     int appearance = 0;              // index into each submesh's per-appearance material list
+    std::vector<std::string> skipMaterials;   // submeshes with these materials are left out (decals)
 };
 
 // Nodes for all skeletons of the plan.

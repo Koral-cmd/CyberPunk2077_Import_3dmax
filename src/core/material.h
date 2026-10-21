@@ -20,6 +20,7 @@ namespace cp77 {
 struct MaterialDef {
     std::string name, base, tmpl;
     std::map<std::string, std::string> strings;   // Data entries that are strings (texture paths ...)
+    bool isDecal() const;
 };
 
 struct MaterialFile {

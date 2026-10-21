@@ -22,6 +22,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <set>
 
 using namespace cp77;
 
@@ -104,7 +105,14 @@ struct Target {
     INode* helper = nullptr;
     std::vector<INode*> bones;
     std::vector<TargetBone> info;
+    size_t own = 0;                  // bones[0..own) belong to the chosen skeleton, the rest to
+                                     // skeletons imported with it (the weapon of a character)
 };
+
+std::string Stamp(const std::string& id) {     // "<import stamp>_<skeleton>"
+    const size_t u = id.find_last_of('_');
+    return u == std::string::npos ? id : id.substr(0, u);
+}
 
 bool FindTarget(int handle, Target& t, std::string& error) {
     Interface* ip = GetCOREInterface();
@@ -118,8 +126,22 @@ bool FindTarget(int handle, Target& t, std::string& error) {
         h = all[0];
     }
     t.helper = h;
-    CollectBones(h, Prop(h, CP77_PROP_SKEL), t.bones);
+    const std::string id = Prop(h, CP77_PROP_SKEL);
+    CollectBones(h, id, t.bones);
     if (t.bones.empty()) { error = "the skeleton has no bones"; return false; }
+    t.own = t.bones.size();
+    // boss animsets also move the weapon: bones of the other skeletons of the same import
+    std::vector<INode*> helpers;
+    CollectHelpers(ip->GetRootNode(), helpers);
+    std::set<std::string> names;
+    for (INode* b : t.bones) names.insert(U(b->GetName()));
+    for (INode* o : helpers) {
+        const std::string oid = Prop(o, CP77_PROP_SKEL);
+        if (o == h || oid == id || Stamp(oid) != Stamp(id)) continue;
+        std::vector<INode*> more;
+        CollectBones(o, oid, more);
+        for (INode* b : more) if (names.insert(U(b->GetName())).second) t.bones.push_back(b);
+    }
     for (INode* b : t.bones) {
         TargetBone tb;
         tb.name = U(b->GetName());
@@ -153,9 +175,20 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
         if (!set->clip(clipIdx[i], clips[i], err)) return W("ERROR\t" + err);
         durations.push_back(clips[i].duration);
     }
+    // companion bones (weapon) only when the clips animate them
+    {
+        std::set<std::string> animated;
+        for (const auto& c : clips) for (const auto& tr : c.tracks) animated.insert(tr.joint);
+        size_t w = tg.own;
+        for (size_t i = tg.own; i < tg.bones.size(); ++i)
+            if (animated.count(tg.info[i].name)) { tg.bones[w] = tg.bones[i]; tg.info[w] = tg.info[i]; ++w; }
+        tg.bones.resize(w);
+        tg.info.resize(w);
+    }
     size_t matched = 0, total = 0;
     for (const auto& c : clips) { size_t m = 0; MatchRatio(c, tg.info, &m); matched += m; total += c.tracks.size(); }
-    if (total > 0 && matched * 3 < total) {
+    // fits when it covers most of the clip - or most of a small skeleton (a weapon in a boss animset)
+    if (total > 0 && matched * 3 < total && (matched == 0 || matched * 3 < tg.own)) {
         return W(Format("ERROR\tthe animset does not fit \"%s\": only %zu of %zu animated bones exist on it. Nothing changed.",
                         U(tg.helper->GetName()).c_str(), matched, total));
     }
@@ -202,20 +235,20 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     }
     ResumeAnimate();
 
-    // clip names on a note track of the helper: start and end key per clip
-    if (timeline) {
-        for (int i = tg.helper->NumNoteTracks() - 1; i >= 0; --i) tg.helper->DeleteNoteTrack(tg.helper->GetNoteTrack(i), TRUE);
+    // clip names on a note track (Dope Sheet) of the helper and of the root bone: start and end key per clip
+    for (INode* holder : { tg.helper, tg.bones.empty() ? nullptr : tg.bones[0] }) {
+        if (!holder) continue;
+        for (int i = holder->NumNoteTracks() - 1; i >= 0; --i) holder->DeleteNoteTrack(holder->GetNoteTrack(i), TRUE);
         DefNoteTrack* nt = static_cast<DefNoteTrack*>(NewDefaultNoteTrack());
-        if (nt) {
-            for (size_t i = 0; i < clips.size(); ++i) {
-                const MSTR name = M(clips[i].name);
-                NoteKey* a = new NoteKey(static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC)), name, 0);
-                NoteKey* b = new NoteKey(static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)), name, 0);
-                nt->keys.Append(1, &a);
-                nt->keys.Append(1, &b);
-            }
-            tg.helper->AddNoteTrack(nt);
+        if (!nt) continue;
+        for (size_t i = 0; i < clips.size(); ++i) {
+            const MSTR name = M(clips[i].name);
+            NoteKey* a = new NoteKey(static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC)), name, 0);
+            NoteKey* b = new NoteKey(static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)), M("end " + clips[i].name), 0);
+            nt->keys.Append(1, &a);
+            nt->keys.Append(1, &b);
         }
+        holder->AddNoteTrack(nt);
     }
     const TimeValue end = std::max<TimeValue>(GetTicksPerFrame(), static_cast<TimeValue>(std::lround(res.end * TIME_TICKSPERSEC)));
     ip->SetAnimRange(Interval(0, end));
@@ -230,7 +263,8 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     if (clips.size() == 1) r = "\"" + clips[0].name + "\" " + r;
     if (!res.unmatched.empty()) r += Format("\n%zu animated bones not on the skeleton: ", res.unmatched.size()) + Join(res.unmatched, ", ");
     if (res.scaleTracks) r += Format("\n%zu tracks with scale (not applied)", res.scaleTracks);
-    if (timeline) r += "\nClip names are on the note track of " + U(tg.helper->GetName()) + ".";
+    if (tg.bones.size() > tg.own) r += Format("\n%zu bones of the weapon animated too", tg.bones.size() - tg.own);
+    r += "\nClip names: note track of " + U(tg.helper->GetName()) + " and " + (tg.bones.empty() ? std::string() : U(tg.bones[0]->GetName())) + " (Dope Sheet).";
     Log("%s (sign flips %zu)", r.c_str(), flips);
     return W(r);
 }

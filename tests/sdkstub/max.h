@@ -94,7 +94,15 @@ inline double GetSystemUnitScale(int) { return 0.0254; }
 
 typedef short BlockID;
 typedef short ParamID;
-class IParamBlock2 { public: BOOL SetValue(ParamID, TimeValue, float, int = 0) { return TRUE; } };
+class Texmap;
+class ParamBlockDesc2 { public: int NameToIndex(const MCHAR*) { return -1; } };
+class IParamBlock2 {
+public:
+    BOOL SetValue(ParamID, TimeValue, float, int = 0) { return TRUE; }
+    BOOL SetValue(ParamID, TimeValue, Texmap*, int = 0) { return TRUE; }
+    ParamBlockDesc2* GetDesc() { return nullptr; }
+    ParamID IndextoID(int) { return 0; }
+};
 
 template <class T> class Tab {
 public:
@@ -110,16 +118,20 @@ public:
     virtual ~Animatable() {}
     virtual void* GetInterface(ULONG) { return nullptr; }
     virtual IParamBlock2* GetParamBlockByID(BlockID) { return nullptr; }
+    virtual int NumParamBlocks() { return 0; }
+    virtual IParamBlock2* GetParamBlock(int) { return nullptr; }
 };
 class ReferenceTarget : public Animatable {};
-class BaseObject : public ReferenceTarget { public: IParamBlock2* GetParamBlock() { return nullptr; } };
+class BaseObject : public ReferenceTarget { public: using ReferenceTarget::GetParamBlock; IParamBlock2* GetParamBlock() { return nullptr; } };
 class Object : public BaseObject {};
 
 #include "control.h"
 
 class Texmap;
-#define MTL_TEX_DISPLAY_ENABLED (1 << 17)
+#define MTL_TEX_DISPLAY_ENABLED (1 << 3)
+#define MTL_HW_MAT_ENABLED (1 << 30)
 #define TEXMAP_CLASS_ID ((SClass_ID)0xc10)
+#define MATERIAL_CLASS_ID ((SClass_ID)0xc00)
 class MtlBase : public ReferenceTarget {
 public:
     void SetName(const MSTR&) {}
@@ -202,6 +214,7 @@ public:
     void DisableSceneRedraw() {}
     void EnableSceneRedraw() {}
     void ActivateTexture(MtlBase*, Mtl*, int = -1) {}
+    void PutMtlToMtlEditor(MtlBase*, int = -1) {}
 };
 inline Interface* GetCOREInterface() { return nullptr; }
 class Interface7 : public Interface {
