@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -250,6 +251,23 @@ bool WriteFile(const std::string& path, const std::string& data) {
     const bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
     std::fclose(f);
     return ok;
+}
+
+bool ParseDouble(const char* b, const char* e, double& out, const char** stop) {
+    while (b < e && (*b == ' ' || *b == '\t')) ++b;
+    if (b < e && *b == '+') ++b;
+    double v = 0.0;
+    const auto r = std::from_chars(b, e, v);
+    if (stop) *stop = r.ptr;
+    if (r.ec != std::errc() || r.ptr == b) return false;
+    out = v;
+    return true;
+}
+bool ParseDouble(const std::string& s, double& out) { return ParseDouble(s.data(), s.data() + s.size(), out); }
+std::string Num(double v, int significant) {
+    char buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof buf, v, std::chars_format::general, significant);
+    return r.ec == std::errc() ? std::string(buf, r.ptr) : std::string("0");
 }
 
 std::string RegexEscape(const std::string& s) {

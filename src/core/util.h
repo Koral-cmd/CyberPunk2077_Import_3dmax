@@ -42,6 +42,13 @@ bool ReadFile(const std::string& path, std::string& out);
 bool WriteFile(const std::string& path, const std::string& data);
 int64_t FileTime(const std::string& path);            // 0 if missing
 
+// Numbers independent of the C locale. 3ds Max switches the process to the user's
+// locale; with a Russian locale strtod("0.6996") stops at the '.' and returns 0 -
+// every bone transform then became an integer (Adam Smasher's skeleton exploded).
+bool ParseDouble(const char* begin, const char* end, double& out, const char** stop = nullptr);
+bool ParseDouble(const std::string& s, double& out);
+std::string Num(double v, int significant = 9);     // always '.' as decimal point
+
 // .NET regex literal for an exact path: escapes every metacharacter.
 std::string RegexEscape(const std::string& s);
 

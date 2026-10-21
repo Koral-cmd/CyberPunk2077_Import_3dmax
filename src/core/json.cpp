@@ -37,10 +37,8 @@ const Value& Value::at(size_t i) const {
 }
 double Value::asDouble(double def) const {
     if (type == Type::Number || type == Type::String) {
-        if (str.empty()) return def;
-        char* end = nullptr;
-        const double d = std::strtod(str.c_str(), &end);
-        return (end && end != str.c_str()) ? d : def;
+        double d;
+        return ParseDouble(str, d) ? d : def;
     }
     if (type == Type::Bool) return b ? 1.0 : 0.0;
     return def;

@@ -494,6 +494,10 @@ bool Assembler::build(const std::string& characterEnt, const std::string& charac
         Entity we;
         if (!collect(plan.weapon, weaponApp, we, error)) return false;
         if (!assemble("weapon", plan.weapon, we, plan, error)) return false;
+        size_t weaponMeshes = 0;
+        for (const auto& m : plan.meshes) if (m.owner == "weapon") ++weaponMeshes;
+        if (weaponMeshes == 0)
+            plan.warnings.push_back(plan.weapon + " has no meshes - its model is probably part of the character (boss weapons are)");
         if (!plan.character.empty() && firstWeaponSkel < plan.skeletons.size()) {
             std::string slot = weaponSlot.empty() ? s_.get(Settings::WeaponSlot, "WeaponRight") : weaponSlot;
             plan.weaponSlot = slot;

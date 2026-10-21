@@ -67,9 +67,8 @@ std::string Settings::get(const std::string& key, const std::string& def) const 
 double Settings::getDouble(const std::string& key, double def) const {
     const std::string v = get(key);
     if (v.empty()) return def;
-    char* e = nullptr;
-    const double d = std::strtod(v.c_str(), &e);
-    return (e && e != v.c_str()) ? d : def;
+    double d;
+    return ParseDouble(ReplaceAll(v, ",", "."), d) ? d : def;   // "0,5" typed by hand also works
 }
 int Settings::getInt(const std::string& key, int def) const { return static_cast<int>(getDouble(key, def)); }
 bool Settings::getBool(const std::string& key, bool def) const {

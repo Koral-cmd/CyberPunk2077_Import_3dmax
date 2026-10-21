@@ -255,7 +255,7 @@ std::wstring Clips(const std::wstring& anims) {
     const auto names = set->clipNames();
     for (size_t i = 0; i < names.size(); ++i) {
         if (i) out += "\n";
-        out += names[i] + Format("\t%.3f", set->clipDuration(i));
+        out += names[i] + "\t" + Num(set->clipDuration(i), 6);
     }
     return W(out);
 }

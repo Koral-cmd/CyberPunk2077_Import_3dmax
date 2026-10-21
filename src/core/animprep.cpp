@@ -87,19 +87,20 @@ void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
 std::string XfToString(const Xf& m) {
     std::string s;
     for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 3; ++c) s += Format(r == 0 && c == 0 ? "%.9g" : " %.9g", m.m[r][c]);
+        for (int c = 0; c < 3; ++c) s += (r == 0 && c == 0 ? "" : " ") + Num(m.m[r][c]);
     return s;
 }
 
 bool XfFromString(const std::string& str, Xf& m) {
     const char* p = str.c_str();
+    const char* end = p + str.size();
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 3; ++c) {
-            char* e = nullptr;
-            const double v = std::strtod(p, &e);
-            if (e == p) return false;
+            double v = 0.0;
+            const char* stop = p;
+            if (!ParseDouble(p, end, v, &stop)) return false;
             m.m[r][c] = v;
-            p = e;
+            p = stop;
         }
     return true;
 }

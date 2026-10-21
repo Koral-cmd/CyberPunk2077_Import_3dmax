@@ -16,6 +16,7 @@
 #include "../src/core/util.h"
 #include "../src/core/wolvenkit.h"
 
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -335,6 +336,15 @@ static void TestDriver(const std::string& dir, const std::string& fakeCli, const
 
 int main(int argc, char** argv) {
     const std::string dir = argc > 1 ? argv[1] : "fixture";
+    // 3ds Max runs with the user's locale; a comma-decimal one broke number parsing once.
+    // Run everything under such a locale when the system has one (the Windows CI runner does).
+    for (const char* loc : { "ru-RU", "Russian_Russia.1251", "ru_RU.UTF-8", "de-DE", "de_DE.UTF-8" }) {
+        if (std::setlocale(LC_ALL, loc)) {
+            const bool comma = std::strtod("0.5", nullptr) != 0.5;
+            std::printf("locale %s (comma decimal: %s)\n", loc, comma ? "yes" : "no");
+            break;
+        }
+    }
     LogOpen(JoinPath(dir, "test.log"));
     TestJson();
     TestXform();
