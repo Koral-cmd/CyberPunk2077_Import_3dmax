@@ -95,13 +95,11 @@ jobs:
         run: |
           $inc = Join-Path $env:MAXSDK "include"
           $q = @(
-            @("bitmap.h", 'ColorSpace|CustomGamma'),
-            @("InputColorSpaceInfo.h", 'virtual|class |enum|Rule'),
-            @("stdmat.h", 'SetBitmapInfo|StdIDToChannel|ColorSpace|GetBitmapInfo'),
-            @("iparamb2.h", 'NameToIndex|IndexToId'),
-            @("maxapi.h", 'PutMtlToMtlEditor|ActivateTexture'),
-            @("imtl.h", 'MTL_HW_MAT_ENABLED|MTL_TEX_DISPLAY_ENABLED|MTL_HW_TEX_ENABLED'),
-            @("*.h", 'PHYSICAL_?MAT|0x3d6b1cec')
+            @("InputColorSpaceInfo.h", '^\s*[A-Za-z]+\s*(=\s*\d+)?\s*,?\s*(//.*)?$|namespace'),
+            @("IColorPipelineMgr.h", 'GetInstance|ModeSettings|static |namespace|class '),
+            @("IModeSettings.h", 'namespace|class |GetDataColorSpaceName'),
+            @("bitmap.h", 'SetRequestedColorSpace|ValidateColorSpace|namespace ColorManagement'),
+            @("*.h", 'MTL_TEX_DISPLAY_ENABLED|MTL_HW_MAT_ENABLED|GetPrimaryMapSlot')
           )
           foreach ($e in $q) {
             $hits = Get-ChildItem $inc -Recurse -Filter $e[0] | Select-String -Pattern $e[1] | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
