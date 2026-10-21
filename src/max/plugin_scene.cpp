@@ -144,12 +144,31 @@ INode* MakeMesh(Interface* ip, const PrepMesh& pm) {
 
 // Skin modifier, filled through ISkinImportData (the order the SDK needs:
 // add modifier, add bones, evaluate the node once, then the weights).
-bool AddSkin(Interface* ip, INode* node, const PrepMesh& pm, const std::vector<INode*>& sceneNodes, std::string& note) {
+//
+// Bind pose: Skin remembers each bone where it stands when it is added. The
+// mesh's vertices sit in the mesh's OWN bind pose, which can differ from the
+// skeleton's rest pose (A-pose). So the bones this mesh uses are moved to the
+// mesh's bind pose first, the skin is built, and then the whole skeleton goes
+// back to its rest pose - the mesh then follows the skeleton like in the game.
+// (ISkinImportData::SetBoneTm was used before; it gave broken meshes in Max 2027.)
+bool AddSkin(Interface* ip, INode* node, const PrepMesh& pm, const PrepScene& scene,
+             const std::vector<INode*>& sceneNodes, std::string& note) {
     Modifier* mod = static_cast<Modifier*>(ip->CreateInstance(OSM_CLASS_ID, SKIN_CLASSID));
     ISkinImportData* imp = mod ? static_cast<ISkinImportData*>(mod->GetInterface(I_SKINIMPORTDATA)) : nullptr;
     if (!mod || !imp) { note = "Skin modifier not available"; return false; }
     Interface7* ip7 = GetCOREInterface7();
     if (!ip7 || ip7->AddModifier(*node, *mod) != Interface7::kRES_SUCCESS) { note = "AddModifier failed"; return false; }
+
+    // 1. bones to the mesh's bind pose (scene nodes are ordered parent before child)
+    std::vector<const PrepMesh::Bind*> binds(sceneNodes.size(), nullptr);
+    for (const auto& o : pm.bindOverrides)
+        if (o.node >= 0 && static_cast<size_t>(o.node) < sceneNodes.size()) binds[static_cast<size_t>(o.node)] = &o;
+    int moved = 0;
+    for (size_t n = 0; n < sceneNodes.size(); ++n) {
+        if (!binds[n] || !sceneNodes[n]) continue;
+        SetWorld(sceneNodes[n], binds[n]->world);
+        ++moved;
+    }
 
     std::vector<char> used(sceneNodes.size(), 0);
     for (size_t i = 0; i < pm.infNode.size(); ++i)
@@ -159,14 +178,6 @@ bool AddSkin(Interface* ip, INode* node, const PrepMesh& pm, const std::vector<I
         if (!used[b] || !sceneNodes[b]) continue;
         imp->AddBoneEx(sceneNodes[b], FALSE);
         ++bones;
-    }
-    // bones whose rest pose differs from the mesh's own bind pose
-    int overrides = 0;
-    for (const auto& o : pm.bindOverrides) {
-        if (o.node < 0 || static_cast<size_t>(o.node) >= sceneNodes.size() || !sceneNodes[static_cast<size_t>(o.node)]) continue;
-        const Matrix3 tm = ToMax(o.world);
-        imp->SetBoneTm(sceneNodes[static_cast<size_t>(o.node)], tm, tm);
-        ++overrides;
     }
     node->EvalWorldState(ip->GetTime());
 
@@ -186,8 +197,15 @@ bool AddSkin(Interface* ip, INode* node, const PrepMesh& pm, const std::vector<I
         if (bn.Count() > 0 && imp->AddWeights(node, static_cast<int>(v), bn, wt)) ++set;
     }
     node->EvalWorldState(ip->GetTime());
-    note = Format("%d bones, %zu/%zu vertices weighted%s", bones, set, pm.verts.size(),
-                  overrides ? Format(", %d bind poses from the mesh", overrides).c_str() : "");
+
+    // 2. the skeleton back to its rest pose
+    if (moved > 0) {
+        for (size_t n = 0; n < sceneNodes.size() && n < scene.nodes.size(); ++n)
+            if (sceneNodes[n] && !scene.nodes[n].helper) SetWorld(sceneNodes[n], scene.nodes[n].world);
+        node->EvalWorldState(ip->GetTime());
+    }
+    note = Format("%d bones, %zu/%zu vertices weighted, %d bones bound at the mesh's own pose (max offset %.2f units at %s)",
+                  bones, set, pm.verts.size(), moved, pm.maxBindOffset, pm.maxBindBone.c_str());
     return true;
 }
 
@@ -279,7 +297,7 @@ std::wstring BuildScene(const ScenePlan& plan) {
         if (prep.skeleton >= 0) {
             SetWorld(node, Xf());
             std::string note;
-            if (AddSkin(ip, node, prep, nodes, note)) ++skinned;
+            if (AddSkin(ip, node, prep, scene, nodes, note)) ++skinned;
             Log("mesh %-32s %6zu verts %6zu tris, chunks %zu shown %zu hidden, skin: %s", prep.name.c_str(), prep.verts.size(),
                 prep.faces.size() / 3, prep.chunksShown, prep.chunksHidden, note.c_str());
             // not parented: a skinned mesh under its skeleton would be moved twice

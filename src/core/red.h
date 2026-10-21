@@ -88,6 +88,7 @@ struct Component {
     std::string skinBind;            // skinning.bindName -> animated component
     // transform binding (rigid meshes, skeletons, slot components)
     std::string parentBind;          // parentTransform.bindName
+    std::string controlBind;         // controlBinding.bindName (animated components: who drives this rig)
     std::string parentSlot;          // parentTransform.slotName
     Xf localTransform;
     // animated component

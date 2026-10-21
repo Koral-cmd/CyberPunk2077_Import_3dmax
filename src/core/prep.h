@@ -51,6 +51,8 @@ struct PrepMesh {
     std::vector<float> infWeight;
     struct Bind { int node; Xf world; };
     std::vector<Bind> bindOverrides; // bones whose bind pose differs from the rest pose
+    double maxBindOffset = 0.0;      // largest bind-vs-rest distance (Max units) - diagnostics
+    std::string maxBindBone;
     std::vector<std::string> missingBones;
     size_t chunksShown = 0, chunksHidden = 0;
 };

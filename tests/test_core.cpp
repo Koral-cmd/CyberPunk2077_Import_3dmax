@@ -115,7 +115,7 @@ static void TestPipeline(const std::string& dir) {
     CHECK(plan.skeletons.size() == 2, "character + weapon skeletons (%zu)", plan.skeletons.size());
     if (plan.skeletons.size() < 2) return;
     const PlanSkeleton& body = plan.skeletons[0];
-    CHECK(body.bones.size() == 6, "body + dangle merged by name: 6 bones (%zu)", body.bones.size());
+    CHECK(body.bones.size() == 13, "body + deformation + dangle merged by name: 13 bones (%zu)", body.bones.size());
     CHECK(body.find("dyng_hair") >= 0 && body.bones[static_cast<size_t>(body.find("dyng_hair"))].parent == body.find("Head"), "dangle bone under Head");
     CHECK(body.animsets.size() == 1, "animset collected");
     CHECK(plan.meshes.size() == 3, "three mesh components (%zu)", plan.meshes.size());
@@ -137,7 +137,7 @@ static void TestPipeline(const std::string& dir) {
     opt.unitsPerMeter = s;
     PrepScene scene;
     PrepSkeletons(plan, opt, scene);
-    CHECK(scene.nodes.size() == 2 + 6 + 2, "nodes: 2 helpers + 8 bones (%zu)", scene.nodes.size());
+    CHECK(scene.nodes.size() == 2 + 13 + 2, "nodes: 2 helpers + 15 bones (%zu)", scene.nodes.size());
     for (size_t i = 0; i < scene.nodes.size(); ++i)
         CHECK(scene.nodes[i].parent < static_cast<int>(i), "parent before child (%zu)", i);
     {

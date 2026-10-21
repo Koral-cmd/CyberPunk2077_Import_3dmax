@@ -99,6 +99,15 @@ DANGLE = [
     ("Head", 0, ((0, 0, 1.7), (0, 0, 0, 1)), None),           # differs from body on purpose: body wins
     ("dyng_hair", 1, ((0, -0.1, 0.1), qaxis((1, 1, 0), 40)), None),
 ]
+# deformation rig: listed BEFORE the base rig in the entity and with deliberately different
+# transforms for the shared bones - the base ("root", its controlBinding target) must win.
+DEFORM = [
+    ("Root", -1, ((0, 0, 0), (0, 0, 0, 1)), ((0, 0, 0), (0, 0, 0, 1))),
+    ("Hips", 0, ((5, 5, 5), qaxis((1, 0, 0), 70)), ((5, 5, 5), qaxis((1, 0, 0), 70))),
+    ("Spine", 1, ((0, 3, 0), (0, 0, 0, 1)), ((0, 3, 0), (0, 0, 0, 1))),
+    ("deform_belly", 2, ((0, 0.1, 0.05), (0, 0, 0, 1)), ((0, 0.1, 0.05), (0, 0, 0, 1))),
+] + [("deform_%d" % i, 2, ((0.01 * i, 0, 0), (0, 0, 0, 1)), ((0.01 * i, 0, 0), (0, 0, 0, 1))) for i in range(6)]
+# (more bones than the base rig, like man_massive_deformations.rig: size must not decide the order)
 GUN = [
     ("Root", -1, ((0, 0, 0), (0, 0, 0, 1)), None),
     ("Trigger", 0, ((0.1, 0, 0.02), qaxis((0, 1, 0), 10)), None),
@@ -203,6 +212,7 @@ APP = "base\\characters\\appearances\\test\\npc_test.app"
 PART = "base\\characters\\garment\\test\\hair_part.ent"
 BODY_RIG = "base\\characters\\base_entities\\test\\body.rig"
 DANGLE_RIG = "base\\characters\\base_entities\\test\\dangle.rig"
+DEFORM_RIG = "base\\characters\\base_entities\\test\\deformations_rig\\body_deformations.rig"
 BODY_MESH = "base\\characters\\common\\test\\body.mesh"
 HAIR_MESH = "base\\characters\\common\\test\\hair.mesh"
 ANIMS = "base\\animations\\npc\\test\\npc_test.anims"
@@ -213,6 +223,7 @@ GUN_MESH = "base\\weapons\\test\\w_test_gun.mesh"
 
 rig_json(BODY_RIG, BODY)
 rig_json(DANGLE_RIG, DANGLE)
+rig_json(DEFORM_RIG, DEFORM)
 rig_json(GUN_RIG, GUN)
 
 anim_root = handle({"$type": "entAnimatedComponent", "name": cname("root"), "rig": ref(BODY_RIG),
@@ -228,7 +239,11 @@ write_json(CH, {"$type": "entEntityTemplate", "defaultAppearance": cname("defaul
                 "includes": [],
                 "compiledData": {"BufferId": "0", "Flags": 0, "Type": "WolvenKit.RED4.Archive.Buffer.RedPackage, WolvenKit.RED4",
                                  "Data": {"Version": 4, "Sections": 6, "CruidIndex": -1, "CruidDict": {},
-                                          "Chunks": [{"$type": "entEntity"}, anim_root["Data"], slots]}}})
+                                          "Chunks": [{"$type": "entEntity"},
+                                                     {"$type": "entAnimatedComponent", "name": cname("deformations"), "rig": ref(DEFORM_RIG),
+                                                      "animations": {"gameplay": [], "cinematics": []},
+                                                      "controlBinding": handle({"$type": "entComponentBinding", "bindName": cname("root")})},
+                                                     anim_root["Data"], slots]}}})
 body_comp = {"$type": "entSkinnedMeshComponent", "name": cname("t0_body"), "mesh": ref(BODY_MESH), "meshAppearance": cname("default"),
              "chunkMask": 18446744073709551613,  # every chunk but #1
              "skinning": handle({"$type": "entSkinningBinding", "bindName": cname("root")})}

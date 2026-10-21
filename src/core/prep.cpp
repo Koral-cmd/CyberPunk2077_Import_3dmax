@@ -267,6 +267,7 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
                 const double dt = (bind.translation() - rest.translation()).length();
                 Xf a = bind.orthonormalized(), b = rest.orthonormalized();
                 a.setRow(3, Vec3()); b.setRow(3, Vec3());
+                if (dt > out.maxBindOffset) { out.maxBindOffset = dt; out.maxBindBone = scene.nodes[static_cast<size_t>(node)].name; }
                 if (dt > tolT || a.maxDiff(b) > 1e-3) out.bindOverrides.push_back({ node, bind });
             }
         }

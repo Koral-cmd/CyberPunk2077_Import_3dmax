@@ -239,11 +239,59 @@ bool Assembler::assemble(const std::string& owner, const std::string& entPath, E
         rc.rig.path = c.rig;
         rigs.push_back(std::move(rc));
     }
-    std::stable_sort(rigs.begin(), rigs.end(), [](const RigComp& a, const RigComp& b) {
-        const int ha = a.rig.find("Hips") >= 0 ? 1 : 0, hb = b.rig.find("Hips") >= 0 ? 1 : 0;
-        if (ha != hb) return ha > hb;
-        return a.rig.names.size() > b.rig.names.size();
-    });
+    // Merge order decides whose local transform a shared bone gets (first wins), so it must
+    // follow the game's wiring, as the WolvenKit Blender add-on does (entity/rig_planning.py):
+    //  1. a rig driven by another (controlBinding) comes after its driver;
+    //  2. the driver of a deformation rig (usually "root" with the base .rig) goes first -
+    //     never the deformation rig itself, whose bones only make sense on top of the base;
+    //  3. otherwise the order of the components in the files.
+    {
+        auto isDeformation = [](const RigComp& r) {
+            const std::string n = Lower(r.comp->name), p = Lower(ReplaceAll(r.rig.path, "\\", "/"));
+            return n.find("deformation") != std::string::npos || p.find("/deformations_rig/") != std::string::npos ||
+                   EndsWith(p, "_deformations.rig") || EndsWith(p, "_deformation.rig");
+        };
+        auto indexOf = [&](const std::string& name) -> int {
+            for (size_t i = 0; i < rigs.size(); ++i) if (rigs[i].comp->name == name) return static_cast<int>(i);
+            return -1;
+        };
+        std::vector<char> emitted(rigs.size(), 0);
+        std::vector<size_t> order;
+        // drivers of deformation rigs first
+        for (size_t i = 0; i < rigs.size(); ++i) {
+            if (!isDeformation(rigs[i])) continue;
+            const int t = indexOf(rigs[i].comp->controlBind);
+            if (t >= 0 && !emitted[static_cast<size_t>(t)]) { emitted[static_cast<size_t>(t)] = 1; order.push_back(static_cast<size_t>(t)); }
+        }
+        // then a stable topological order over controlBinding (driver before driven)
+        bool progress = true;
+        while (order.size() < rigs.size() && progress) {
+            progress = false;
+            for (size_t i = 0; i < rigs.size(); ++i) {
+                if (emitted[i]) continue;
+                const int t = indexOf(rigs[i].comp->controlBind);
+                if (t >= 0 && static_cast<size_t>(t) != i && !emitted[static_cast<size_t>(t)]) continue;
+                emitted[i] = 1;
+                order.push_back(i);
+                progress = true;
+            }
+        }
+        for (size_t i = 0; i < rigs.size(); ++i) if (!emitted[i]) order.push_back(i);   // cycles: file order
+        // no controlBinding at all: a component called "root" is the base
+        if (!rigs.empty()) {
+            bool anyBinding = false;
+            for (const auto& r : rigs) if (!r.comp->controlBind.empty()) anyBinding = true;
+            if (!anyBinding)
+                for (size_t k = 0; k < order.size(); ++k)
+                    if (IEquals(rigs[order[k]].comp->name, "root") && k > 0) { std::rotate(order.begin(), order.begin() + static_cast<long>(k), order.begin() + static_cast<long>(k) + 1); break; }
+        }
+        std::vector<RigComp> sorted;
+        for (size_t i : order) sorted.push_back(std::move(rigs[i]));
+        rigs = std::move(sorted);
+        std::string names;
+        for (const auto& r : rigs) names += (names.empty() ? "" : " -> ") + r.comp->name;
+        Log("rig merge order: %s", names.c_str());
+    }
     const bool apose = !IEquals(s_.get(Settings::RestPose, "APose"), "Reference");
 
     std::vector<std::pair<const red::Component*, size_t>> separate;   // component -> skeleton index

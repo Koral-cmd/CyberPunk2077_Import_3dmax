@@ -198,6 +198,8 @@ static bool ReadComponent(const Doc& d, const Value& v, const std::string& sourc
         c.parentBind = CName(pt["bindName"]);
         c.parentSlot = CName(pt["slotName"]);
     }
+    const Value& cb = d.deref(v["controlBinding"]);
+    if (cb.isObject() && cb["enabled"].asInt(1) != 0) c.controlBind = CName(cb["bindName"]);
 
     if (Contains(type, "MorphTarget") && v.has("morphResource")) {
         c.kind = CompKind::MorphMesh;
