@@ -36,7 +36,8 @@ endif()
 set(CP77_CORE
     src/core/util.cpp src/core/json.cpp src/core/xform.cpp src/core/gltf.cpp
     src/core/red.cpp src/core/meshdata.cpp src/core/anim.cpp src/core/animprep.cpp
-    src/core/settings.cpp src/core/wolvenkit.cpp src/core/assembler.cpp src/core/prep.cpp)
+    src/core/settings.cpp src/core/wolvenkit.cpp src/core/assembler.cpp src/core/prep.cpp
+    src/core/image.cpp src/core/material.cpp)
 
 add_library(cp77core STATIC ${CP77_CORE})
 target_include_directories(cp77core PUBLIC src/core)

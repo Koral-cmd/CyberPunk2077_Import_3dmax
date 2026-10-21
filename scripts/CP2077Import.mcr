@@ -25,7 +25,7 @@ macroScript CP2077Import_Open
         (
             global cp77ImportRoll
             try (destroyDialog cp77ImportRoll) catch ()
-            rollout cp77ImportRoll "CP2077 Import" width:540 height:760
+            rollout cp77ImportRoll "CP2077 Import" width:540 height:800
             (
                 local charPaths = #()
                 local weapPaths = #()
@@ -64,6 +64,12 @@ macroScript CP2077Import_Open
                     dropdownlist ddWeapApp "Appearance" width:510
                     edittext edSlot "Slot" text:"WeaponRight" fieldWidth:160
                 )
+                group "Options"
+                (
+                    spinner spLod "LOD (1 = full detail) " range:[1,8,1] type:#integer fieldWidth:40 across:3 align:#left tooltip:"2, 3 ... = lighter meshes, when the game has them (re-exports once)"
+                    checkbox cbTex "Textures" checked:true tooltip:"Materials with the textures WolvenKit exported (multilayer colours are baked)"
+                    checkbox cbFlipG "Flip normal green" checked:false
+                )
                 button btImport "Import" width:220 height:32
                 button btJson "Import a WolvenKit project file (.ent.json) ..." width:300
                 edittext edReport "" height:120 readOnly:true
@@ -100,6 +106,10 @@ macroScript CP2077Import_Open
                     edCli.text = CP77Cpp.getSetting "WolvenKitCli"
                     local slotName = CP77Cpp.getSetting "WeaponSlot"
                     edSlot.text = (if slotName == "" then "WeaponRight" else slotName)
+                    local lod = CP77Cpp.getSetting "Lod"
+                    spLod.value = (if lod == "" then 1 else (lod as integer))
+                    cbTex.checked = (CP77Cpp.getSetting "Textures") != "0"
+                    cbFlipG.checked = (CP77Cpp.getSetting "NormalFlipGreen") == "1"
                     local n = CP77Cpp.indexCount()
                     lbIndex.text = (if n > 0 then (n as string + " paths indexed") else "no index yet")
                     report ("CP2077 Import " + CP77Cpp.version() + "\nSettings: " + CP77Cpp.settingsPath())
@@ -154,12 +164,18 @@ macroScript CP2077Import_Open
                     if ent == undefined then ent = ""
                     local app = (if ddCharApp.selected != undefined then ddCharApp.selected else "")
                     local wApp = (if ddWeapApp.selected != undefined then ddWeapApp.selected else "")
+                    CP77Cpp.setSetting "Lod" (spLod.value as string)
+                    CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
+                    CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
                     busy ("importing " + ent)
                     local r = CP77Cpp.importCharacter ent app wEnt wApp edSlot.text
                     report r
                     completeRedraw()
                 )
                 on btJson pressed do (
+                    CP77Cpp.setSetting "Lod" (spLod.value as string)
+                    CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
+                    CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
                     local p = getOpenFileName caption:"Entity exported by WolvenKit (.ent.json)" types:"Entity JSON (*.ent.json)|*.ent.json|JSON (*.json)|*.json|"
                     if p != undefined then (
                         busy ("importing " + p)
@@ -222,7 +238,7 @@ macroScript CP2077Import_Anim
                     button btClips "List clips" width:120 across:2
                     label lbInfo "" align:#left width:360
                     listbox lbClips "" height:12
-                    button btOne "Load selected clip" width:160 across:3 tooltip:"Replaces the keys - double-click a clip does the same"
+                    button btOne "Load selected clip" width:160 across:3 tooltip:"Starts at the current frame of the time slider; before it the rest pose is kept. Double-click a clip does the same"
                     edittext edClipFilter "Filter" fieldWidth:110
                     button btAll "Load all (filtered)" width:160 tooltip:"All clips one after another, names on the helper's note track"
                     spinner spGap "Gap between clips (frames)" range:[0,1000,10] type:#integer fieldWidth:50 across:2 align:#left

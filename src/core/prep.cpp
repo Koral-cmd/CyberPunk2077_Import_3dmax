@@ -2,6 +2,7 @@
 #include "util.h"
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -99,11 +100,16 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
     out.source = pm.mesh;
     out.owner = pm.owner;
 
-    int minLod = 1 << 30;
-    for (const auto& p : data.parts) minLod = std::min(minLod, p.lod);
+    // LOD: the wanted one, else the closest coarser one present, else the finest
+    std::set<int> lods;
+    for (const auto& p : data.parts) lods.insert(p.lod);
+    int useLod = lods.empty() ? 1 : *lods.begin();
+    for (int l : lods) if (l <= std::max(1, opt.lod)) useLod = l;
+    out.lod = useLod;
+    out.lodsAvailable.assign(lods.begin(), lods.end());
     std::vector<const SubMesh*> parts;
     for (const auto& p : data.parts) {
-        if (p.lod != minLod) continue;
+        if (p.lod != useLod) continue;
         if (!ChunkVisible(pm.chunkMask, p.chunk)) { ++out.chunksHidden; continue; }
         parts.push_back(&p);
         ++out.chunksShown;
@@ -220,14 +226,16 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
         // tverts: one per source vertex, zero where a part has no UVs
         for (size_t v = 0; v < nv; ++v) {
             out.uv0.push_back(p.uv0.empty() ? 0.0f : p.uv0[v * 2]);
-            out.uv0.push_back(p.uv0.empty() ? 0.0f : p.uv0[v * 2 + 1]);
+            out.uv0.push_back(p.uv0.empty() ? 0.0f : 1.0f - p.uv0[v * 2 + 1]);   // glTF v runs down, Max v up
             if (anyUv1) {
                 out.uv1.push_back(p.uv1.empty() ? 0.0f : p.uv1[v * 2]);
-                out.uv1.push_back(p.uv1.empty() ? 0.0f : p.uv1[v * 2 + 1]);
+                out.uv1.push_back(p.uv1.empty() ? 0.0f : 1.0f - p.uv1[v * 2 + 1]);
             }
         }
         tvBase += nv;
-        std::string mat = p.materials.empty() ? p.name : p.materials[0];
+        // materials list one name per mesh appearance
+        const size_t ai = p.materials.empty() ? 0 : std::min(static_cast<size_t>(std::max(0, opt.appearance)), p.materials.size() - 1);
+        std::string mat = p.materials.empty() ? p.name : p.materials[ai];
         out.materials.push_back(mat);
     }
     if (skinned) {

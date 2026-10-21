@@ -5,8 +5,10 @@
 #include "plugin_internal.h"
 
 #include "../core/animprep.h"
+#include "../core/material.h"
 #include "../core/meshdata.h"
 
+#include <bitmap.h>
 #include <iskin.h>
 #include <stdmat.h>
 
@@ -72,15 +74,78 @@ Color MatColor(size_t i) {
     return Color(c[0], c[1], c[2]);
 }
 
-Mtl* MakeMaterial(const std::string& name, const std::vector<std::string>& subs, std::map<std::string, Mtl*>& cache) {
-    auto std_ = [&](const std::string& n) -> Mtl* {
-        auto it = cache.find(n);
+// Normal Bump texmap (Max's GNormal)
+const Class_ID kNormalBumpClass(0x243e22c6, 0x63f6a014);
+
+Texmap* MakeBitmap(const std::string& file, bool linear, bool alphaAsMono) {
+    BitmapTex* bt = NewDefaultBitmapTex();
+    if (!bt) return nullptr;
+    const MSTR f = M(file);
+    if (linear) {   // normal maps are data, not colour: no gamma
+        BitmapInfo bi;
+        bi.SetName(f.data());
+        bi.SetCustomFlag(BMM_CUSTOM_GAMMA);
+        bi.SetCustomGamma(1.0f);
+        bt->SetBitmapInfo(bi);
+    }
+    bt->SetMapName(f.data());
+    bt->SetName(M(FileStem(file)));
+    bt->SetAlphaSource(alphaAsMono ? ALPHA_FILE : ALPHA_NONE);
+    bt->SetAlphaAsMono(alphaAsMono ? TRUE : FALSE);
+    return bt;
+}
+
+struct MatSlot {
+    std::string name;
+    MaterialTextures tex;
+};
+
+Mtl* MakeMaterial(Interface* ip, const std::string& name, const std::vector<MatSlot>& subs, const std::string& keyPrefix,
+                  std::map<std::string, Mtl*>& cache, size_t& textured) {
+    auto std_ = [&](const MatSlot& slot) -> Mtl* {
+        // the same name means different textures in different meshes ("decals_all")
+        const std::string key = (slot.tex.diffuse.empty() && slot.tex.normal.empty() ? std::string() : keyPrefix + "|") + slot.name;
+        auto it = cache.find(key);
         if (it != cache.end()) return it->second;
         StdMat2* m = NewDefaultStdMat();
         if (!m) return nullptr;
-        m->SetName(M(n));
+        m->SetName(M(slot.name));
         m->SetDiffuse(MatColor(cache.size()), 0);
-        cache[n] = m;
+        Texmap* shown = nullptr;
+        if (!slot.tex.diffuse.empty()) {
+            if (Texmap* d = MakeBitmap(slot.tex.diffuse, false, false)) {
+                m->SetDiffuse(Color(1.0f, 1.0f, 1.0f), 0);
+                m->SetSubTexmap(ID_DI, d);
+                m->EnableMap(ID_DI, TRUE);
+                shown = d;
+            }
+        }
+        if (!slot.tex.normal.empty()) {
+            Texmap* nb = static_cast<Texmap*>(ip->CreateInstance(TEXMAP_CLASS_ID, kNormalBumpClass));
+            Texmap* n = MakeBitmap(slot.tex.normal, true, false);
+            if (nb && n) {
+                nb->SetSubTexmap(0, n);
+                m->SetSubTexmap(ID_BU, nb);
+                m->SetTexmapAmt(ID_BU, 1.0f, 0);
+                m->EnableMap(ID_BU, TRUE);
+            } else if (n) {
+                m->SetSubTexmap(ID_BU, n);
+                m->EnableMap(ID_BU, TRUE);
+            }
+        }
+        if (!slot.tex.opacity.empty()) {
+            if (Texmap* o = MakeBitmap(slot.tex.opacity, false, true)) {
+                m->SetSubTexmap(ID_OP, o);
+                m->EnableMap(ID_OP, TRUE);
+            }
+        }
+        if (shown) {
+            ++textured;
+            m->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
+            shown->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
+            ip->ActivateTexture(shown, m);
+        }
+        cache[key] = m;
         return m;
     };
     if (subs.size() == 1) return std_(subs[0]);
@@ -89,10 +154,22 @@ Mtl* MakeMaterial(const std::string& name, const std::vector<std::string>& subs,
     mm->SetName(M(name));
     mm->SetNumSubMtls(static_cast<int>(subs.size()));
     for (size_t i = 0; i < subs.size(); ++i) {
-        MSTR sub = M(subs[i]);
+        MSTR sub = M(subs[i].name);
         mm->SetSubMtlAndName(static_cast<int>(i), std_(subs[i]), sub);
     }
     return mm;
+}
+
+// "C:\cache\base\x\y.glb" for "base\x\y.mesh" -> "C:\cache"
+std::string DepotRootOf(const std::string& glb, const std::string& mesh) {
+    std::string rel = NormalizeDepotPath(mesh);
+    const size_t dot = rel.find_last_of('.');
+    if (dot != std::string::npos) rel = rel.substr(0, dot);
+    const std::string g = Lower(ReplaceAll(glb, "/", "\\"));
+    const std::string tail = Lower(rel) + ".glb";
+    if (g.size() > tail.size() && g.compare(g.size() - tail.size(), tail.size(), tail) == 0)
+        return glb.substr(0, glb.size() - tail.size());
+    return std::string();
 }
 
 INode* MakeMesh(Interface* ip, const PrepMesh& pm) {
@@ -229,7 +306,12 @@ std::wstring BuildScene(const ScenePlan& plan) {
     // matrices of a MeshOnly GLB (from the mesh's BoneRigMatrices) were metres off on real
     // characters (Adam Smasher: Spine2 6.6 m), so they are only used on request.
     opt.useMeshBind = IEquals(st.get(Settings::SkinBind, "Rest"), "Mesh");
-    Log("units per metre %.4f", opt.unitsPerMeter);
+    opt.lod = std::max(1, st.getInt(Settings::Lod, 1));
+    const bool textures = st.getBool(Settings::Textures, true);
+    TextureOptions topt;
+    topt.outDir = JoinPath(st.cacheDir(), "_cp77_textures");
+    topt.flipGreen = st.getBool(Settings::NormalFlipGreen, false);
+    Log("units per metre %.4f, LOD %d, textures %s", opt.unitsPerMeter, opt.lod, textures ? "on" : "off");
 
     PrepScene scene;
     PrepSkeletons(plan, opt, scene);
@@ -287,9 +369,11 @@ std::wstring BuildScene(const ScenePlan& plan) {
 
     // ---- meshes --------------------------------------------------------------
     std::map<std::string, Mtl*> mtlCache;
-    size_t made = 0, skinned = 0, tris = 0, failed = 0;
+    size_t made = 0, skinned = 0, tris = 0, failed = 0, textured = 0, lighterLod = 0, noLod = 0;
     std::string report;
     std::map<std::string, MeshData> loaded;
+    std::map<std::string, MaterialFile> matFiles;
+    std::map<std::string, MaterialTextures> texCache;   // per material file + name
     for (size_t mi = 0; mi < plan.meshes.size(); ++mi) {
         const PlanMesh& pm = plan.meshes[mi];
         if (pm.glb.empty()) { ++failed; continue; }
@@ -300,9 +384,20 @@ std::wstring BuildScene(const ScenePlan& plan) {
             if (!LoadMeshGlb(pm.glb, md, err)) { Log("mesh %s: %s", pm.mesh.c_str(), err.c_str()); report += pm.component + ": " + err + "\n"; ++failed; continue; }
             it = loaded.emplace(pm.glb, std::move(md)).first;
         }
+        // <mesh>.Material.json: material names per appearance, textures
+        auto mf = matFiles.find(pm.glb);
+        if (mf == matFiles.end()) {
+            MaterialFile f;
+            std::string merr;
+            const std::string path = pm.glb.substr(0, pm.glb.size() - 4) + ".Material.json";
+            if (FileExists(path) && !ReadMaterialFile(path, f, merr)) Log("materials %s: %s", path.c_str(), merr.c_str());
+            mf = matFiles.emplace(pm.glb, std::move(f)).first;
+        }
+        PrepOptions mopt = opt;
+        mopt.appearance = std::max(0, mf->second.appearanceIndex(pm.appearance));
         PrepMesh prep;
         std::string err;
-        if (!PrepMeshFrom(plan, mi, it->second, opt, scene, prep, err)) { Log("mesh %s: %s", pm.component.c_str(), err.c_str()); report += err + "\n"; continue; }
+        if (!PrepMeshFrom(plan, mi, it->second, mopt, scene, prep, err)) { Log("mesh %s: %s", pm.component.c_str(), err.c_str()); report += err + "\n"; continue; }
         {
             Vec3 lo(1e30, 1e30, 1e30), hi(-1e30, -1e30, -1e30);
             for (const Vec3& v : prep.verts) {
@@ -318,8 +413,34 @@ std::wstring BuildScene(const ScenePlan& plan) {
         ++made;
         tris += prep.faces.size() / 3;
         node->SetUserPropString(MSTR(CP77_PROP_SOURCE), M(pm.mesh + (pm.appearance.empty() ? "" : " @" + pm.appearance)));
-        Mtl* mtl = MakeMaterial(prep.name + "_mtl", prep.materials, mtlCache);
+        if (prep.lod != opt.lod) ++noLod;
+        else if (prep.lod > 1) ++lighterLod;
+        std::vector<MatSlot> slots;
+        std::string texNotes;
+        for (const std::string& mn : prep.materials) {
+            MatSlot slot;
+            slot.name = mn;
+            const MaterialDef* def = textures ? mf->second.find(mn) : nullptr;
+            if (def) {
+                const std::string key = pm.glb + "|" + mn;
+                auto tc = texCache.find(key);
+                if (tc == texCache.end()) {
+                    topt.cacheRoot = DepotRootOf(pm.glb, pm.mesh);
+                    if (topt.cacheRoot.empty()) topt.cacheRoot = st.cacheDir();
+                    MaterialTextures t;
+                    ResolveTextures(*def, topt, t);
+                    if (!t.note.empty()) texNotes += mn + ": " + t.note;
+                    tc = texCache.emplace(key, std::move(t)).first;
+                }
+                slot.tex = tc->second;
+            }
+            slots.push_back(std::move(slot));
+        }
+        Mtl* mtl = MakeMaterial(ip, prep.name + "_mtl", slots, pm.glb, mtlCache, textured);
         if (mtl) node->SetMtl(mtl);
+        Log("mesh %-32s LOD %d (has %s), appearance #%d, materials: %s%s", prep.name.c_str(), prep.lod,
+            Join([&] { std::vector<std::string> v; for (int l : prep.lodsAvailable) v.push_back(std::to_string(l)); return v; }(), ",").c_str(),
+            mopt.appearance, Join(prep.materials, ", ").c_str(), texNotes.empty() ? "" : (" | " + texNotes).c_str());
         if (prep.skeleton >= 0) {
             SetWorld(node, Xf());
             std::string note;
@@ -341,6 +462,8 @@ std::wstring BuildScene(const ScenePlan& plan) {
     std::string head = Format("%zu skeleton(s), %zu bones, %zu meshes (%zu skinned, %zu triangles)", plan.skeletons.size(),
                               boneCount, made, skinned, tris);
     if (failed) head += Format(", %zu mesh(es) missing", failed);
+    if (textures) head += Format(", %zu textured material(s)", textured);
+    if (opt.lod > 1) head += Format("\nLOD %d: %zu mesh(es) have it, %zu do not (used the nearest)", opt.lod, lighterLod, noLod);
     for (const auto& w : plan.warnings) report += "warning: " + w + "\n";
     for (const auto& w : scene.warnings) report += "warning: " + w + "\n";
     Log("%s\n%s", head.c_str(), report.c_str());

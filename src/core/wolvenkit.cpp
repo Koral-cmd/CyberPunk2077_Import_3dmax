@@ -227,16 +227,28 @@ bool WolvenKit::ensureJson(FileStore& store, const std::vector<std::string>& dep
 bool WolvenKit::ensureGlb(FileStore& store, const std::vector<std::string>& depotsIn, std::string& error) const {
     std::vector<std::string> hashes;
     const std::vector<std::string> depots = Resolvable(depotsIn, hashes);
-    std::vector<std::string> need;
-    for (const auto& d : depots) if (store.glbFile(d).empty()) need.push_back(d);
+    // LOD 2+ needs a full export; files from a LOD-1-only export carry no marker
+    const bool allLods = s_.getInt(Settings::Lod, 1) > 1 || !s_.getBool(Settings::LodFilter, true);
+    auto marker = [](const std::string& glb) { return glb + ".alllods"; };
+    std::vector<std::string> need, redo;
+    for (const auto& d : depots) {
+        const std::string g = store.glbFile(d);
+        if (g.empty()) need.push_back(d);
+        else if (allLods && StartsWith(NativePath(g), NativePath(store.cache())) && !FileExists(marker(g))) { need.push_back(d); redo.push_back(g); }
+    }
     if (need.empty()) return true;
     std::string why;
-    if (!configured(why)) { error = why + " Missing: " + Join(need, ", "); return false; }
+    if (!configured(why)) {
+        if (redo.size() == need.size()) return true;     // LOD 1 files are still usable
+        error = why + " Missing: " + Join(need, ", ");
+        return false;
+    }
+    for (const auto& g : redo) RemoveFile(g);
     for (const auto& rx : ExactRegexes(need, 12000)) {
         std::vector<std::string> args = { "uncook" };
         for (const auto& f : archiveArgs()) args.push_back(f);
         args.insert(args.end(), { "-o", store.cache(), "-r", rx, "--mesh-export-type", "MeshOnly" });
-        if (s_.getBool(Settings::LodFilter, true)) args.push_back("--mesh-export-lod-filter");
+        if (!allLods) args.push_back("--mesh-export-lod-filter");
         const std::string game = s_.get(Settings::GamePath);
         if (!game.empty()) { args.push_back("-gp"); args.push_back(NativePath(game)); }
         std::string out, err;
@@ -244,7 +256,11 @@ bool WolvenKit::ensureGlb(FileStore& store, const std::vector<std::string>& depo
         if (!err.empty()) { error = err; return false; }
     }
     std::vector<std::string> still;
-    for (const auto& d : need) if (store.glbFile(d).empty()) still.push_back(d);
+    for (const auto& d : need) {
+        const std::string g = store.glbFile(d);
+        if (g.empty()) still.push_back(d);
+        else if (allLods) WriteFile(marker(g), "all LODs\n");
+    }
     if (!still.empty()) {
         error = "WolvenKit did not export: " + Join(still, ", ") + " (see " + JoinPath(Settings::DefaultDir(), "wolvenkit_last.txt") + ")";
         return false;

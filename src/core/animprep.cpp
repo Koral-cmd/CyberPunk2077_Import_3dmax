@@ -21,7 +21,7 @@ double MatchRatio(const Clip& clip, const std::vector<TargetBone>& target, size_
 }
 
 void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
-                   const std::vector<TargetBone>& target, double s, AnimPrepResult& out) {
+                   const std::vector<TargetBone>& target, double s, AnimPrepResult& out, double leadIn) {
     out = AnimPrepResult();
     std::map<std::string, int> index;
     for (size_t i = 0; i < target.size(); ++i) index.emplace(target[i].name, static_cast<int>(i));
@@ -42,6 +42,16 @@ void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
         k.times.push_back(t);
         k.local.push_back(m);
     };
+
+    // rest pose before a clip that starts later on the timeline
+    double first = -1.0;
+    for (const ClipPlacement& cp : clips) if (cp.clip && (first < 0.0 || cp.start < first)) first = cp.start;
+    if (leadIn > 0.0 && first >= leadIn - kTick * 0.5) {
+        for (size_t b = 0; b < target.size(); ++b) {
+            push(b, 0.0, target[b].restLocal);
+            if (first - leadIn > kTick) push(b, first - leadIn, target[b].restLocal);
+        }
+    }
 
     std::set<std::string> animatedJoints, unmatched;
     for (const ClipPlacement& cp : clips) {

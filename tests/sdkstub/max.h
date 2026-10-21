@@ -117,8 +117,17 @@ class Object : public BaseObject {};
 
 #include "control.h"
 
-class MtlBase : public ReferenceTarget { public: void SetName(const MSTR&) {} };
+class Texmap;
+#define MTL_TEX_DISPLAY_ENABLED (1 << 17)
+#define TEXMAP_CLASS_ID ((SClass_ID)0xc10)
+class MtlBase : public ReferenceTarget {
+public:
+    void SetName(const MSTR&) {}
+    void SetMtlFlag(int, BOOL = TRUE) {}
+    virtual void SetSubTexmap(int, Texmap*) {}
+};
 class Mtl : public MtlBase {};
+class Texmap : public MtlBase {};
 class NoteTrack;
 struct ObjectState { Object* obj = nullptr; };
 
@@ -192,6 +201,7 @@ public:
     void SetTime(TimeValue, BOOL = TRUE) {}
     void DisableSceneRedraw() {}
     void EnableSceneRedraw() {}
+    void ActivateTexture(MtlBase*, Mtl*, int = -1) {}
 };
 inline Interface* GetCOREInterface() { return nullptr; }
 class Interface7 : public Interface {

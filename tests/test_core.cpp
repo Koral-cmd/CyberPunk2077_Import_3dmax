@@ -9,7 +9,9 @@
 #include "../src/core/anim.h"
 #include "../src/core/animprep.h"
 #include "../src/core/assembler.h"
+#include "../src/core/image.h"
 #include "../src/core/json.h"
+#include "../src/core/material.h"
 #include "../src/core/meshdata.h"
 #include "../src/core/prep.h"
 #include "../src/core/red.h"
@@ -182,6 +184,20 @@ static void TestPipeline(const std::string& dir) {
     }
     CHECK(Near(MatchRatio(idle, target), 1.0, 1e-9), "idle fits the skeleton");
 
+    {   // clip placed at 1 s: rest pose at 0 and up to one frame before the clip
+        AnimPrepResult late;
+        PrepAnimation({ { &idle, 1.0 } }, set, target, s, late, 1.0 / 30.0);
+        bool lead = late.keys.size() == target.size();
+        for (const auto& k : late.keys) {
+            if (!lead) break;
+            const Xf& r = target[static_cast<size_t>(k.bone)].restLocal;
+            lead = k.times.size() >= 3 && Near(k.times[0], 0.0, 1e-9) && Near(k.times[1], 1.0 - 1.0 / 30.0, 1e-9) && k.times[2] >= 1.0 - 1e-9 &&
+                   NearV(k.local[0].translation(), r.translation(), 1e-9) && NearV(k.local[1].row(0), r.row(0), 1e-9);
+        }
+        CHECK(lead, "rest pose held before a clip that starts later");
+        CHECK(Near(late.end, 1.0 + idle.duration, 1e-9), "end includes the offset: %f", late.end);
+    }
+
     AnimPrepResult ar;
     PrepAnimation({ { &idle, 0.0 } }, set, target, s, ar);
     CHECK(ar.keys.size() == target.size(), "every bone keyed in single-clip mode");
@@ -273,6 +289,62 @@ static void TestPipeline(const std::string& dir) {
     }
 }
 
+static void TestMaterials(const std::string& work) {
+    const std::string root = JoinPath(work, "matroot");
+    auto put = [&](const std::string& rel, const std::string& text) { MakeDirs(DirName(JoinPath(root, rel))); WriteFile(JoinPath(root, rel), text); };
+    auto img = [&](const std::string& rel, int w, int h, auto pixel) {
+        Image im; im.w = w; im.h = h; im.px.resize(static_cast<size_t>(w * h * 4));
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) pixel(x, y, im.at(x, y));
+        std::string e;
+        SavePng(JoinPath(root, rel), im, e);
+    };
+    img("base/m/tex/mask_layers/mask_1.png", 4, 4, [](int x, int, uint8_t* p) { p[0] = p[1] = p[2] = x < 2 ? 255 : 0; p[3] = 255; });
+    img("base/m/tex/n.png", 2, 2, [](int, int, uint8_t* p) { p[0] = 128; p[1] = 128; p[2] = 0; p[3] = 255; });
+    img("base/m/tex/d.png", 2, 2, [](int x, int, uint8_t* p) { p[0] = 200; p[1] = 100; p[2] = 50; p[3] = x ? 255 : 0; });
+    auto tmpl = [](const char* name, const char* rgb) {
+        return std::string(R"({"Data":{"RootChunk":{"overrides":{"colorScale":[{"n":{"$type":"CName","$storage":"string","$value":")") + name +
+               R"("},"v":{"Elements":[)" + rgb + R"(]}}]}}}})";
+    };
+    put("base/s/a.mltemplate.json", tmpl("c0", "1,0,0"));
+    put("base/s/b.mltemplate.json", tmpl("c1", "0,0,1"));
+    put("base/m/tex/setup.mlsetup.json", R"({"Data":{"RootChunk":{"layers":[
+        {"material":{"DepotPath":{"$type":"ResourcePath","$storage":"string","$value":"base\\s\\a.mltemplate"}},"colorScale":{"$type":"CName","$storage":"string","$value":"c0"},"opacity":1},
+        {"material":{"DepotPath":{"$type":"ResourcePath","$storage":"string","$value":"base\\s\\b.mltemplate"}},"colorScale":{"$type":"CName","$storage":"string","$value":"c1"},"opacity":1}]}}})");
+    put("base/m/x.Material.json", R"({"Header":{"MaterialJsonVersion":"1.0.0"},"Materials":[
+        {"Name":"ml","BaseMaterial":"engine\\materials\\multilayered.mt","MaterialTemplate":"engine\\materials\\multilayered.mt","Data":{
+            "MultilayerSetup":"base\\m\\tex\\setup.mlsetup","MultilayerMask":"base\\m\\tex\\mask.mlmask","GlobalNormal":"base\\m\\tex\\n.xbm"}},
+        {"Name":"dec","BaseMaterial":"base\\materials\\mesh_decal.mt","MaterialTemplate":"base\\materials\\mesh_decal.mt","Data":{
+            "DiffuseTexture":"base\\m\\tex\\d.xbm","NormalTexture":"engine\\textures\\editor\\normal.xbm"}}],
+        "Appearances":{"default0":["ml","dec"],"black1":["dec","dec"]}})");
+    MaterialFile mf;
+    std::string err;
+    CHECK(ReadMaterialFile(JoinPath(root, "base/m/x.Material.json"), mf, err), "material file: %s", err.c_str());
+    CHECK(mf.appearanceIndex("black") == 1 && mf.appearanceIndex("") == 0 && mf.appearanceIndex("default") == 0 && mf.appearanceIndex("nope") == -1,
+          "appearance index");
+    TextureOptions o;
+    o.cacheRoot = root;
+    o.outDir = JoinPath(work, "mattex");
+    o.bakeSize = 8;
+    const MaterialDef* ml = mf.find("ml");
+    const MaterialDef* dec = mf.find("dec");
+    CHECK(ml && dec, "materials found");
+    if (!ml || !dec) return;
+    MaterialTextures t;
+    ResolveTextures(*ml, o, t);
+    CHECK(t.baked && !t.diffuse.empty() && !t.normal.empty(), "multilayer: baked diffuse + normal (%s)", t.note.c_str());
+    Image d, n;
+    CHECK(LoadImage(t.diffuse, d, err) && d.w == 64, "bake readable, %d px", d.w);
+    if (d.w == 64) {
+        const uint8_t* l = d.at(16, 30);
+        const uint8_t* r = d.at(48, 30);
+        CHECK(l[2] > 250 && l[0] < 5 && r[0] > 250 && r[2] < 5, "layer 1 painted through its mask: %d,%d,%d / %d,%d,%d", l[0], l[1], l[2], r[0], r[1], r[2]);
+    }
+    CHECK(LoadImage(t.normal, n, err) && n.at(0, 0)[2] > 250 && n.at(0, 0)[0] == 128, "two-channel normal map gets its blue back");
+    MaterialTextures td;
+    ResolveTextures(*dec, o, td);
+    CHECK(!td.baked && FileStem(td.diffuse) == "d" && td.opacity == td.diffuse && td.normal.empty(), "decal: diffuse, alpha as opacity, no placeholder normal");
+}
+
 static void TestListing() {
     const std::string out =
         "[12:00:01 INF] Loading archives...\n"
@@ -350,6 +422,7 @@ int main(int argc, char** argv) {
     TestXform();
     TestListing();
     TestPipeline(dir);
+    TestMaterials(argc > 3 ? argv[3] : dir);
     if (argc > 3) TestDriver(dir, argv[2], argv[3]);
     std::printf("\n%d checks passed, %d failed\n", g_ok, g_fail);
     return g_fail ? 1 : 0;

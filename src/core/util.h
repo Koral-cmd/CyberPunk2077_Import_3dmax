@@ -40,6 +40,7 @@ bool DirExists(const std::string& path);
 bool MakeDirs(const std::string& path);
 bool ReadFile(const std::string& path, std::string& out);
 bool WriteFile(const std::string& path, const std::string& data);
+bool RemoveFile(const std::string& path);
 int64_t FileTime(const std::string& path);            // 0 if missing
 
 // Numbers independent of the C locale. 3ds Max switches the process to the user's

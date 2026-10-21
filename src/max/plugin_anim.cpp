@@ -162,11 +162,15 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     const Settings& st = Config();
     const int fps = std::max(1, st.getInt(Settings::FrameRate, 30));
     const double gap = timeline ? std::max(0, st.getInt(Settings::GapFrames, 10)) / static_cast<double>(fps) : 0.0;
-    const Timeline tl = LayoutClips(durations, gap);
+    Timeline tl = LayoutClips(durations, gap);
+    // clips start at the time slider; the frames before keep the rest pose
+    const TimeValue now = std::max<TimeValue>(0, ip->GetTime());
+    const double offset = static_cast<double>(now) / TIME_TICKSPERSEC;
+    for (double& t : tl.starts) t += offset;
     std::vector<ClipPlacement> place;
     for (size_t i = 0; i < clips.size(); ++i) place.push_back({ &clips[i], tl.starts[i] });
     AnimPrepResult res;
-    PrepAnimation(place, *set, tg.info, UnitsPerMeter(), res);
+    PrepAnimation(place, *set, tg.info, UnitsPerMeter(), res, 1.0 / fps);
 
     if (GetFrameRate() != fps && TIME_TICKSPERSEC % fps == 0) SetFrameRate(fps);
     theHold.Suspend();
@@ -217,11 +221,12 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     ip->SetAnimRange(Interval(0, end));
     ip->EnableSceneRedraw();
     theHold.Resume();
-    ip->SetTime(0);
+    ip->SetTime(now);
     ip->RedrawViews(ip->GetTime());
 
     std::string r = Format("%zu clip(s) on \"%s\": %zu bones keyed, %zu keys, %.2f s (%d fps)", clips.size(),
                            U(tg.helper->GetName()).c_str(), res.keys.size(), keys, res.end, fps);
+    if (now > 0) r += Format(", from frame %d (rest pose before)", static_cast<int>(now / GetTicksPerFrame()));
     if (clips.size() == 1) r = "\"" + clips[0].name + "\" " + r;
     if (!res.unmatched.empty()) r += Format("\n%zu animated bones not on the skeleton: ", res.unmatched.size()) + Join(res.unmatched, ", ");
     if (res.scaleTracks) r += Format("\n%zu tracks with scale (not applied)", res.scaleTracks);

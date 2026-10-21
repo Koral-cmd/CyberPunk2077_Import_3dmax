@@ -47,8 +47,11 @@ struct AnimPrepResult {
 // Fraction of the joints animated by `clip` that exist on the target.
 double MatchRatio(const Clip& clip, const std::vector<TargetBone>& target, size_t* matched = nullptr);
 
+// leadIn > 0: when the first clip starts later than 0, every bone holds its
+// rest pose (TargetBone::restLocal) from 0 until leadIn before that start.
 void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
-                   const std::vector<TargetBone>& target, double unitsPerMeter, AnimPrepResult& out);
+                   const std::vector<TargetBone>& target, double unitsPerMeter, AnimPrepResult& out,
+                   double leadIn = 0.0);
 
 // Serialise a rest pose for the bone's user properties (12 numbers).
 std::string XfToString(const Xf& m);

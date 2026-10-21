@@ -23,7 +23,10 @@ public:
     static constexpr const char* RestPose       = "RestPose";        // APose | Reference
     static constexpr const char* SkinBind       = "SkinBind";        // Rest (default) | Mesh: pose the Skin is bound in
     static constexpr const char* BoneSize       = "BoneSize";        // metres
-    static constexpr const char* LodFilter      = "LodFilter";       // 1 = only LOD 1
+    static constexpr const char* LodFilter      = "LodFilter";       // 1 = only LOD 1 exported (when Lod = 1)
+    static constexpr const char* Lod            = "Lod";             // 1 = full detail, 2.. = lighter (if the mesh has it)
+    static constexpr const char* Textures       = "Textures";        // 1 = materials with textures
+    static constexpr const char* NormalFlipGreen= "NormalFlipGreen"; // 1 = invert normal map green
     static constexpr const char* WeldVertices   = "WeldVertices";    // 1 = weld UV seams for smooth shading
     static constexpr const char* WeaponSlot     = "WeaponSlot";      // default slot for weapons
     static constexpr const char* GapFrames      = "GapFrames";       // between clips in "load all"

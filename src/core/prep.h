@@ -55,6 +55,8 @@ struct PrepMesh {
     std::string maxBindBone;
     std::vector<std::string> missingBones;
     size_t chunksShown = 0, chunksHidden = 0;
+    int lod = 1;                     // LOD actually used
+    std::vector<int> lodsAvailable;
 };
 
 struct PrepScene {
@@ -70,6 +72,8 @@ struct PrepOptions {
     double unitsPerMeter = 1.0;
     bool weld = true;
     bool useMeshBind = true;
+    int lod = 1;                     // wanted LOD (1 = full detail); nearest available is used
+    int appearance = 0;              // index into each submesh's per-appearance material list
 };
 
 // Nodes for all skeletons of the plan.

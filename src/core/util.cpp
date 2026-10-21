@@ -221,6 +221,14 @@ int64_t FileTime(const std::string& path) {
 static std::FILE* OpenFile(const std::string& path, const char* mode) { return std::fopen(NativePath(path).c_str(), mode); }
 #endif
 
+bool RemoveFile(const std::string& path) {
+#ifdef _WIN32
+    return _wremove(Widen(NativePath(path)).c_str()) == 0;
+#else
+    return std::remove(NativePath(path).c_str()) == 0;
+#endif
+}
+
 bool MakeDirs(const std::string& path) {
     const std::string p = NativePath(path);
     if (p.empty() || DirExists(p)) return true;
