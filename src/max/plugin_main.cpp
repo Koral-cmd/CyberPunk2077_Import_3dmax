@@ -28,7 +28,7 @@ Settings& Config() {
         if (!g_settings.load(path)) {
             // first start: defaults that work for most installs
             g_settings.set(Settings::RestPose, "APose");
-            g_settings.set(Settings::UseMeshBind, "1");
+            g_settings.set(Settings::SkinBind, "Rest");
             g_settings.set(Settings::LodFilter, "1");
             g_settings.set(Settings::WeldVertices, "1");
             g_settings.set(Settings::WeaponSlot, "WeaponRight");

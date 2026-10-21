@@ -252,7 +252,7 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
             scene.warnings.push_back(out.name + ": bones not in the skeleton: " + Join(out.missingBones, ", "));
 
         // bind pose of the mesh against the rest pose of the bones
-        if (opt.useMeshBind) {
+        {   // offsets always measured (log), overrides only when the mesh bind is wanted
             for (size_t j = 0; j < data.jointNames.size(); ++j) {
                 if (usedJoint[j] != 1 || j >= data.jointBind.size()) continue;
                 const int node = jointNode[j];
@@ -268,7 +268,7 @@ bool PrepMeshFrom(const ScenePlan& plan, size_t mi, const MeshData& data, const 
                 Xf a = bind.orthonormalized(), b = rest.orthonormalized();
                 a.setRow(3, Vec3()); b.setRow(3, Vec3());
                 if (dt > out.maxBindOffset) { out.maxBindOffset = dt; out.maxBindBone = scene.nodes[static_cast<size_t>(node)].name; }
-                if (dt > tolT || a.maxDiff(b) > 1e-3) out.bindOverrides.push_back({ node, bind });
+                if (opt.useMeshBind && (dt > tolT || a.maxDiff(b) > 1e-3)) out.bindOverrides.push_back({ node, bind });
             }
         }
     }

@@ -204,7 +204,7 @@ bool AddSkin(Interface* ip, INode* node, const PrepMesh& pm, const PrepScene& sc
             if (sceneNodes[n] && !scene.nodes[n].helper) SetWorld(sceneNodes[n], scene.nodes[n].world);
         node->EvalWorldState(ip->GetTime());
     }
-    note = Format("%d bones, %zu/%zu vertices weighted, %d bones bound at the mesh's own pose (max offset %.2f units at %s)",
+    note = Format("%d bones, %zu/%zu vertices weighted, %d bones bound at the mesh's own pose; mesh bind vs rest pose: max %.2f units at %s",
                   bones, set, pm.verts.size(), moved, pm.maxBindOffset, pm.maxBindBone.c_str());
     return true;
 }
@@ -224,12 +224,28 @@ std::wstring BuildScene(const ScenePlan& plan) {
     PrepOptions opt;
     opt.unitsPerMeter = UnitsPerMeter();
     opt.weld = st.getBool(Settings::WeldVertices, true);
-    opt.useMeshBind = st.getBool(Settings::UseMeshBind, true);
+    // Rest (default): the skin is bound at the skeleton's A-pose, as WolvenKit's own "WithRig"
+    // export and the Blender add-on do - the vertices are stored in that pose. The bind
+    // matrices of a MeshOnly GLB (from the mesh's BoneRigMatrices) were metres off on real
+    // characters (Adam Smasher: Spine2 6.6 m), so they are only used on request.
+    opt.useMeshBind = IEquals(st.get(Settings::SkinBind, "Rest"), "Mesh");
     Log("units per metre %.4f", opt.unitsPerMeter);
 
     PrepScene scene;
     PrepSkeletons(plan, opt, scene);
     const float boneW = static_cast<float>(st.getDouble(Settings::BoneSize, 0.01) * opt.unitsPerMeter);
+
+    for (size_t k = 0; k < plan.skeletons.size(); ++k) {
+        const PlanSkeleton& sk = plan.skeletons[k];
+        std::string line;
+        for (const char* bn : { "Root", "Hips", "Spine2", "Head", "LeftHand", "RightHand", "LeftFoot", "RightFoot" }) {
+            const int b = sk.find(bn);
+            if (b < 0) continue;
+            const Vec3 t = sk.bones[static_cast<size_t>(b)].restWorld.translation();
+            line += Format("  %s(%.2f %.2f %.2f)", bn, t.x, t.y, t.z);
+        }
+        Log("skeleton %zu \"%s\" rest pose, metres:%s", k, sk.name.c_str(), line.c_str());
+    }
 
     Redraw redraw(ip);
     // ---- nodes ---------------------------------------------------------------
@@ -287,6 +303,16 @@ std::wstring BuildScene(const ScenePlan& plan) {
         PrepMesh prep;
         std::string err;
         if (!PrepMeshFrom(plan, mi, it->second, opt, scene, prep, err)) { Log("mesh %s: %s", pm.component.c_str(), err.c_str()); report += err + "\n"; continue; }
+        {
+            Vec3 lo(1e30, 1e30, 1e30), hi(-1e30, -1e30, -1e30);
+            for (const Vec3& v : prep.verts) {
+                lo = Vec3(std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z));
+                hi = Vec3(std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z));
+            }
+            const double s = opt.unitsPerMeter;
+            if (!prep.verts.empty())
+                Log("mesh %-32s bounds, metres: %.2f %.2f %.2f .. %.2f %.2f %.2f", prep.name.c_str(), lo.x / s, lo.y / s, lo.z / s, hi.x / s, hi.y / s, hi.z / s);
+        }
         INode* node = MakeMesh(ip, prep);
         if (!node) { ++failed; continue; }
         ++made;

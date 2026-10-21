@@ -21,7 +21,7 @@ public:
     static constexpr const char* ExtraArchives  = "ExtraArchives";   // ';'-separated folders/.archive files (mods)
     static constexpr const char* UnitsPerMeter  = "UnitsPerMeter";   // 0 = from the Max system unit
     static constexpr const char* RestPose       = "RestPose";        // APose | Reference
-    static constexpr const char* UseMeshBind    = "UseMeshBind";     // 1 = bind skin at the mesh's own bind pose
+    static constexpr const char* SkinBind       = "SkinBind";        // Rest (default) | Mesh: pose the Skin is bound in
     static constexpr const char* BoneSize       = "BoneSize";        // metres
     static constexpr const char* LodFilter      = "LodFilter";       // 1 = only LOD 1
     static constexpr const char* WeldVertices   = "WeldVertices";    // 1 = weld UV seams for smooth shading

@@ -104,7 +104,7 @@ t0_body, hair ...  меши со Skin; Multi/Sub-материал с имена�
 | `ExtraArchives` | — | моды: папки или `.archive` через `;` |
 | `UnitsPerMeter` | `0` | `0` — по системной единице Max; иначе число (100 = см) |
 | `RestPose` | `APose` | поза покоя костей: `APose` (как у мешей) или `Reference` |
-| `UseMeshBind` | `1` | брать бинд скина из меша, если он отличается от позы покоя |
+| `SkinBind` | `Rest` | в какой позе привязывается Skin: `Rest` — A-поза скелета (как экспорт WolvenKit «WithRig» и аддон для Blender), `Mesh` — бинд-матрицы из GLB меша |
 | `LodFilter` | `1` | только LOD 1 |
 | `WeldVertices` | `1` | сшивать UV-швы для гладкого шейдинга (UV не теряются) |
 | `WeaponSlot` | `WeaponRight` | слот оружия |
