@@ -94,11 +94,21 @@ jobs:
         continue-on-error: true
         run: |
           $inc = Join-Path $env:MAXSDK "include"
-          $pat = 'ColorSpace|SetBitmapInfo|NameToIndex|IndexToId|PutMtlToMtlEditor|MTL_HW_MAT_ENABLED|MTL_TEX_DISPLAY_ENABLED|StdIDToChannel|SetCustomGamma|ActivateTexture|GNORMAL_CLASS_ID|PHYSICALMATERIAL|PHYSICAL_MATERIAL'
-          $hits = Get-ChildItem $inc -Recurse -Include *.h | Select-String -Pattern $pat | Select-Object -First 120 | ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line.Trim())" }
-          $msg = ($hits -join "%0A")
-          if ($msg.Length -gt 60000) { $msg = $msg.Substring(0, 60000) }
-          Write-Host "::notice title=sdkfacts::$msg"
+          $q = @(
+            @("bitmap.h", 'ColorSpace|CustomGamma'),
+            @("InputColorSpaceInfo.h", 'virtual|class |enum|Rule'),
+            @("stdmat.h", 'SetBitmapInfo|StdIDToChannel|ColorSpace|GetBitmapInfo'),
+            @("iparamb2.h", 'NameToIndex|IndexToId'),
+            @("maxapi.h", 'PutMtlToMtlEditor|ActivateTexture'),
+            @("imtl.h", 'MTL_HW_MAT_ENABLED|MTL_TEX_DISPLAY_ENABLED|MTL_HW_TEX_ENABLED'),
+            @("*.h", 'PHYSICAL_?MAT|0x3d6b1cec')
+          )
+          foreach ($e in $q) {
+            $hits = Get-ChildItem $inc -Recurse -Filter $e[0] | Select-String -Pattern $e[1] | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+            $msg = ($hits -join " || ")
+            if ($msg.Length -gt 3800) { $msg = $msg.Substring(0, 3800) }
+            Write-Host "::notice title=sdk $($e[0])::$msg"
+          }
 
       - name: Configure
         shell: pwsh
