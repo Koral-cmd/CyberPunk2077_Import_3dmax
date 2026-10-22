@@ -366,11 +366,22 @@ macroScript CP2077Import_Anim
                     lbInfo.text = (clipNames.count as string + " clips, " + (formattedPrint total format:".1f") + " s in total")
                     report ("Animset " + setPath)
                 )
+                -- WhiteoutDex keeps sequences in custom attributes on the scene root: rebuild
+                -- them from the root note track the plugin just wrote
+                fn syncWhiteoutDex = (
+                    if (globalVars.isGlobal #WdxSequenceStorage) and (WdxSequenceStorage != undefined) then (
+                        try (
+                            local n = WdxSequenceStorage.migrateFromNoteTracks removeTracks:true
+                            report (edReport.text + "\nWhiteoutDex: " + (n as string) + " sequence(s)")
+                        ) catch (report (edReport.text + "\nWhiteoutDex sequences not updated: " + getCurrentException()))
+                    )
+                )
                 fn applyOne = (
                     local i = selIndex lbClips
                     if (currentSet == "" or i < 1 or i > clipNames.count) then (report "List the clips and pick one."; return ok)
                     busy ("loading " + clipNames[i])
                     report (CP77Cpp.applyClip currentSet clipNames[i] (rigHandle()))
+                    syncWhiteoutDex()
                     completeRedraw()
                 )
 
@@ -399,6 +410,7 @@ macroScript CP2077Import_Anim
                     CP77Cpp.setSetting "GapFrames" (spGap.value as string)
                     busy "loading all clips"
                     report (CP77Cpp.applyAll currentSet edClipFilter.text (rigHandle()))
+                    syncWhiteoutDex()
                     completeRedraw()
                 )
                 on btReset pressed do (

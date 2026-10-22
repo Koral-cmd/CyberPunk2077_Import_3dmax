@@ -235,16 +235,21 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     }
     ResumeAnimate();
 
-    // clip names on a note track (Dope Sheet) of the helper and of the root bone: start and end key per clip
-    for (INode* holder : { tg.helper, tg.bones.empty() ? nullptr : tg.bones[0] }) {
+    // Clip names on a note track - on the scene root, where WhiteoutDex (and NeoDex) read
+    // their sequences: two keys with the same value "Name" mark start and end. Also on the
+    // skeleton helper, where they are easy to find in the Dope Sheet.
+    for (INode* holder : { ip->GetRootNode(), tg.helper }) {
         if (!holder) continue;
         for (int i = holder->NumNoteTracks() - 1; i >= 0; --i) holder->DeleteNoteTrack(holder->GetNoteTrack(i), TRUE);
         DefNoteTrack* nt = static_cast<DefNoteTrack*>(NewDefaultNoteTrack());
         if (!nt) continue;
         for (size_t i = 0; i < clips.size(); ++i) {
-            const MSTR name = M(clips[i].name);
-            NoteKey* a = new NoteKey(static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC)), name, 0);
-            NoteKey* b = new NoteKey(static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)), M("end " + clips[i].name), 0);
+            const MSTR name = M("\"" + clips[i].name + "\"");
+            const TimeValue t0 = static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC));
+            const TimeValue t1 = std::max<TimeValue>(t0 + GetTicksPerFrame(),
+                                                     static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)));
+            NoteKey* a = new NoteKey(t0, name, 0);
+            NoteKey* b = new NoteKey(t1, name, 0);
             nt->keys.Append(1, &a);
             nt->keys.Append(1, &b);
         }
@@ -264,7 +269,7 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     if (!res.unmatched.empty()) r += Format("\n%zu animated bones not on the skeleton: ", res.unmatched.size()) + Join(res.unmatched, ", ");
     if (res.scaleTracks) r += Format("\n%zu tracks with scale (not applied)", res.scaleTracks);
     if (tg.bones.size() > tg.own) r += Format("\n%zu bones of the weapon animated too", tg.bones.size() - tg.own);
-    r += "\nClip names: note track of " + U(tg.helper->GetName()) + " and " + (tg.bones.empty() ? std::string() : U(tg.bones[0]->GetName())) + " (Dope Sheet).";
+    r += "\nClip names: note track of the scene root (WhiteoutDex sequences) and of " + U(tg.helper->GetName()) + " (Dope Sheet).";
     Log("%s (sign flips %zu)", r.c_str(), flips);
     return W(r);
 }
