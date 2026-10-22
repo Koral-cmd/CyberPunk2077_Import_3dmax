@@ -313,7 +313,7 @@ macroScript CP2077Import_Anim
                     dotNetControl lbClips "System.Windows.Forms.ListBox" width:510 height:170
                     button btOne "Add selected clip" width:160 across:3 tooltip:"Added after the clips already loaded (the first one starts at the time slider, rest pose before it). Double-click a clip does the same"
                     edittext edClipFilter "Filter" fieldWidth:110
-                    button btAll "Load all (filtered)" width:160 tooltip:"Replaces everything: all clips one after another"
+                    button btAll "Add all (filtered)" width:160 tooltip:"All clips (matching the filter) added after the loaded ones"
                     spinner spGap "Gap between clips (frames)" range:[0,1000,10] type:#integer fieldWidth:50 across:2 align:#left
                     button btReset "Back to rest pose" width:140 align:#right tooltip:"Removes every loaded clip"
                 )
@@ -321,7 +321,7 @@ macroScript CP2077Import_Anim
                 (
                     dotNetControl lbLoaded "System.Windows.Forms.ListBox" width:510 height:110
                     button btPreview "Play selected" width:120 across:3
-                    button btShowAll "Whole timeline" width:120
+                    button btShowAll "Back to my timeline" width:120
                     button btDelete "Delete selected" width:120 tooltip:"Removes that clip's keys; the others stay where they are"
                 )
                 edittext edReport "" height:100 readOnly:true
@@ -402,10 +402,12 @@ macroScript CP2077Import_Anim
                         ) catch (report (edReport.text + "\nWhiteoutDex sequences not updated: " + getCurrentException()))
                     )
                 )
+                local savedRange = undefined     -- the user's time range while one clip is shown
                 fn playLoaded = (
                     local i = selIndex lbLoaded
                     if (i < 1 or i > loadedClips.count) then (report "Pick a loaded clip."; return ok)
                     local c = loadedClips[i]
+                    if savedRange == undefined then savedRange = animationRange
                     animationRange = interval c[2] (amax (c[2] + 1) c[3])
                     sliderTime = c[2]
                     playAnimation immediateReturn:true
@@ -460,9 +462,7 @@ macroScript CP2077Import_Anim
                 on btPreview pressed do playLoaded()
                 on btShowAll pressed do (
                     stopAnimation()
-                    local e = 0
-                    for c in loadedClips do e = amax e c[3]
-                    animationRange = interval 0 (amax 1 e)
+                    if savedRange != undefined then (animationRange = savedRange; savedRange = undefined)
                 )
                 on btDelete pressed do (
                     local i = selIndex lbLoaded

@@ -48,6 +48,7 @@ public:
     bool configured(std::string& why) const;
     // Runs the CLI; output (stdout+stderr) is returned and logged.
     int run(const std::vector<std::string>& args, std::string& output, std::string& error) const;
+    int runOnce(const std::vector<std::string>& args, std::string& output, std::string& error) const;
 
     // Make sure <depot>.json exists in the store for each path.
     bool ensureJson(FileStore& store, const std::vector<std::string>& depots, std::string& error) const;

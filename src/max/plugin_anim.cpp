@@ -254,8 +254,8 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     const Settings& st = Config();
     const int fps = std::max(1, st.getInt(Settings::FrameRate, 30));
     const double gapS = std::max(0, st.getInt(Settings::GapFrames, 10)) / static_cast<double>(fps);
-    // one clip is added after the ones already loaded; "all" replaces everything
-    std::vector<Loaded> loaded = timeline ? std::vector<Loaded>() : ReadLoaded(tg.helper);
+    // clips are added after the ones already loaded (one or many)
+    std::vector<Loaded> loaded = ReadLoaded(tg.helper);
     const bool append = !loaded.empty();
     Timeline tl = LayoutClips(durations, timeline ? gapS : 0.0);
     const TimeValue now = std::max<TimeValue>(0, ip->GetTime());
@@ -316,9 +316,11 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
         loaded.push_back(l);
     }
     PublishLoaded(tg.helper, loaded);
+    // the time range the user set is kept; only made longer when the clips do not fit
     TimeValue end = GetTicksPerFrame();
     for (const Loaded& l : loaded) end = std::max(end, l.t1);
-    ip->SetAnimRange(Interval(0, end));
+    const Interval cur = ip->GetAnimRange();
+    if (end > cur.End()) ip->SetAnimRange(Interval(std::min<TimeValue>(cur.Start(), 0), end));
     ip->EnableSceneRedraw();
     theHold.Resume();
     ip->SetTime(startT);
@@ -451,10 +453,7 @@ std::wstring DeleteLoaded(int rig, int index) {
             if (c) c->DeleteTime(iv, TIME_INCLEFT | TIME_INCRIGHT | TIME_NOSLIDE);
     }
     ResumeAnimate();
-    PublishLoaded(tg.helper, loaded);
-    TimeValue end = GetTicksPerFrame() * 100;
-    if (!loaded.empty()) { end = GetTicksPerFrame(); for (const Loaded& l : loaded) end = std::max(end, l.t1); }
-    ip->SetAnimRange(Interval(0, end));
+    PublishLoaded(tg.helper, loaded);     // time range left as it is
     ip->EnableSceneRedraw();
     theHold.Resume();
     ip->SetTime(loaded.empty() ? 0 : loaded.back().t0);

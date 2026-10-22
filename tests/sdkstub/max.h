@@ -210,6 +210,7 @@ public:
     void RedrawViews(TimeValue, DWORD = 0, ReferenceTarget* = nullptr) {}
     INode* GetINodeByHandle(ULONG) { return nullptr; }
     void SetAnimRange(Interval) {}
+    Interval GetAnimRange() { return Interval(); }
     void SetTime(TimeValue, BOOL = TRUE) {}
     void DisableSceneRedraw() {}
     void EnableSceneRedraw() {}

@@ -1,4 +1,6 @@
 #include "wolvenkit.h"
+
+#include <cstring>
 #include "util.h"
 
 #include <algorithm>
@@ -71,8 +73,51 @@ std::string WolvenKit::QuoteArg(const std::string& a) {
 
 std::vector<std::string> WolvenKit::archiveArgs() const { return s_.archiveFolders(); }
 
+#ifdef _WIN32
+// WolvenKit 9.1 sometimes dies with a stack overflow (0xC00000FD) while writing big animsets
+// to glTF (Adam Smasher's minigun set). The main thread of a .NET app gets the stack size
+// from its exe header (1.5 MB): a copy next to the original with 256 MB avoids it, and
+// DOTNET_DefaultStackSize does the same for the worker threads.
+static std::string BigStackExe(const std::string& exe) {
+    const std::string native = NativePath(exe);
+    std::string stem = native;
+    if (IEndsWith(stem, ".exe")) stem.resize(stem.size() - 4);
+    const std::string copy = stem + ".cp77.exe";
+    if (FileExists(copy) && FileTime(copy) >= FileTime(native)) return copy;
+    std::string b;
+    if (!ReadFile(native, b) || b.size() < 0x200 || b[0] != 'M' || b[1] != 'Z') return native;
+    uint32_t pe = 0;
+    std::memcpy(&pe, &b[0x3C], 4);
+    if (static_cast<size_t>(pe) + 24 + 96 > b.size() || std::memcmp(&b[pe], "PE\0\0", 4) != 0) return native;
+    const size_t opt = static_cast<size_t>(pe) + 24;
+    uint16_t magic = 0;
+    std::memcpy(&magic, &b[opt], 2);
+    if (magic == 0x20B) { const uint64_t v = 256ull << 20; std::memcpy(&b[opt + 72], &v, 8); }        // PE32+
+    else if (magic == 0x10B) { const uint32_t v = 64u << 20; std::memcpy(&b[opt + 72], &v, 4); }      // PE32
+    else return native;
+    if (!WriteFile(copy, b)) { Log("cannot write %s - using the original WolvenKit.CLI", copy.c_str()); return native; }
+    Log("WolvenKit copy with a bigger stack: %s", copy.c_str());
+    return copy;
+}
+#endif
+
 int WolvenKit::run(const std::vector<std::string>& args, std::string& output, std::string& error) const {
+    int code = runOnce(args, output, error);
+    if (code == static_cast<int>(0xC00000FD)) {     // stack overflow inside WolvenKit: once more
+        Log("WolvenKit crashed with a stack overflow - retrying");
+        output.clear();
+        error.clear();
+        code = runOnce(args, output, error);
+    }
+    return code;
+}
+
+int WolvenKit::runOnce(const std::vector<std::string>& args, std::string& output, std::string& error) const {
+#ifdef _WIN32
+    const std::string exe = BigStackExe(s_.get(Settings::WolvenKitCli));
+#else
     const std::string exe = s_.get(Settings::WolvenKitCli);
+#endif
     const std::string outFile = JoinPath(Settings::DefaultDir(), "wolvenkit_last.txt");
     MakeDirs(Settings::DefaultDir());
     std::string cmd = QuoteArg(NativePath(exe));
@@ -103,8 +148,13 @@ int WolvenKit::run(const std::vector<std::string>& args, std::string& output, st
     buf.push_back(0);
     // Working directory = the CLI's folder (it looks for its oodle dll and appsettings there).
     const std::wstring wdir = Widen(DirName(NativePath(exe)));
+    // bigger stacks for the .NET worker threads too (hex), only for the child
+    wchar_t prevStack[64];
+    const DWORD hadStack = GetEnvironmentVariableW(L"DOTNET_DefaultStackSize", prevStack, 64);
+    SetEnvironmentVariableW(L"DOTNET_DefaultStackSize", L"4000000");
     const BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
                                    wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+    SetEnvironmentVariableW(L"DOTNET_DefaultStackSize", (hadStack > 0 && hadStack < 64) ? prevStack : nullptr);
     if (!ok) {
         CloseHandle(h);
         error = Format("cannot start WolvenKit.CLI (error %lu)", static_cast<unsigned long>(GetLastError()));
