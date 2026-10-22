@@ -51,7 +51,9 @@ double MatchRatio(const Clip& clip, const std::vector<TargetBone>& target, size_
 // rest pose (TargetBone::restLocal) from 0 until leadIn before that start.
 void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
                    const std::vector<TargetBone>& target, double unitsPerMeter, AnimPrepResult& out,
-                   double leadIn = 0.0);
+                   double leadIn = 0.0, bool closeEnds = false);
+// closeEnds: every bone also keyed at the end of each clip (so a clip added later
+// does not blend into this one) - always done when there are several clips.
 
 // Serialise a rest pose for the bone's user properties (12 numbers).
 std::string XfToString(const Xf& m);

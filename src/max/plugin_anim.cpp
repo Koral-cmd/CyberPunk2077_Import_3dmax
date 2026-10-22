@@ -19,6 +19,7 @@
 
 #include <notetrck.h>
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -154,6 +155,64 @@ bool FindTarget(int handle, Target& t, std::string& error) {
     return true;
 }
 
+// Loaded clips are recorded as a note track on the skeleton helper: two keys with the
+// same value "Name" (start, end) - the format WhiteoutDex reads from the scene root.
+struct Loaded {
+    std::string name;
+    TimeValue t0 = 0, t1 = 0;
+};
+
+std::vector<Loaded> ReadLoaded(INode* holder) {
+    std::vector<Loaded> out;
+    if (!holder || holder->NumNoteTracks() < 1) return out;
+    DefNoteTrack* nt = static_cast<DefNoteTrack*>(holder->GetNoteTrack(0));
+    if (!nt) return out;
+    std::vector<std::pair<TimeValue, std::string>> keys;
+    for (int i = 0; i < nt->keys.Count(); ++i)
+        if (nt->keys[i]) keys.emplace_back(nt->keys[i]->time, U(nt->keys[i]->note.data()));
+    std::sort(keys.begin(), keys.end());
+    std::vector<bool> used(keys.size(), false);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (used[i]) continue;
+        const std::string& v = keys[i].second;
+        if (v.size() < 3 || v.front() != '"') continue;
+        for (size_t j = i + 1; j < keys.size(); ++j) {
+            if (used[j] || keys[j].second != v) continue;
+            used[i] = used[j] = true;
+            const size_t q = v.find('"', 1);
+            out.push_back({ v.substr(1, q == std::string::npos ? std::string::npos : q - 1), keys[i].first, keys[j].first });
+            break;
+        }
+    }
+    return out;
+}
+
+void WriteLoaded(INode* holder, const std::vector<Loaded>& clips) {
+    if (!holder) return;
+    for (int i = holder->NumNoteTracks() - 1; i >= 0; --i) holder->DeleteNoteTrack(holder->GetNoteTrack(i), TRUE);
+    if (clips.empty()) return;
+    DefNoteTrack* nt = static_cast<DefNoteTrack*>(NewDefaultNoteTrack());
+    if (!nt) return;
+    for (const Loaded& c : clips) {
+        const MSTR v = M("\"" + c.name + "\"");
+        NoteKey* a = new NoteKey(c.t0, v, 0);
+        NoteKey* b = new NoteKey(c.t1, v, 0);
+        nt->keys.Append(1, &a);
+        nt->keys.Append(1, &b);
+    }
+    holder->AddNoteTrack(nt);
+}
+
+// helper (the record) and scene root (WhiteoutDex / NeoDex sequences)
+void PublishLoaded(INode* helper, const std::vector<Loaded>& clips) {
+    WriteLoaded(helper, clips);
+    if (Interface* ip = GetCOREInterface()) WriteLoaded(ip->GetRootNode(), clips);
+}
+
+bool IsLinear(Control* c, bool rotation) {
+    return c && c->ClassID() == Class_ID(rotation ? LININTERP_ROTATION_CLASS_ID : LININTERP_POSITION_CLASS_ID, 0);
+}
+
 struct AnimMode {
     AnimMode() { AnimateOn(); }
     ~AnimMode() { AnimateOff(); }
@@ -194,16 +253,26 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     }
     const Settings& st = Config();
     const int fps = std::max(1, st.getInt(Settings::FrameRate, 30));
-    const double gap = timeline ? std::max(0, st.getInt(Settings::GapFrames, 10)) / static_cast<double>(fps) : 0.0;
-    Timeline tl = LayoutClips(durations, gap);
-    // clips start at the time slider; the frames before keep the rest pose
+    const double gapS = std::max(0, st.getInt(Settings::GapFrames, 10)) / static_cast<double>(fps);
+    // one clip is added after the ones already loaded; "all" replaces everything
+    std::vector<Loaded> loaded = timeline ? std::vector<Loaded>() : ReadLoaded(tg.helper);
+    const bool append = !loaded.empty();
+    Timeline tl = LayoutClips(durations, timeline ? gapS : 0.0);
     const TimeValue now = std::max<TimeValue>(0, ip->GetTime());
-    const double offset = static_cast<double>(now) / TIME_TICKSPERSEC;
+    TimeValue startT = now;    // first clip: at the time slider, rest pose before it
+    if (append) {
+        TimeValue lastEnd = 0;
+        for (const Loaded& l : loaded) lastEnd = std::max(lastEnd, l.t1);
+        startT = std::max(now, lastEnd + static_cast<TimeValue>(std::lround(gapS * TIME_TICKSPERSEC)));
+        startT -= startT % GetTicksPerFrame();
+        if (startT <= lastEnd) startT = lastEnd + GetTicksPerFrame();
+    }
+    const double offset = static_cast<double>(startT) / TIME_TICKSPERSEC;
     for (double& t : tl.starts) t += offset;
     std::vector<ClipPlacement> place;
     for (size_t i = 0; i < clips.size(); ++i) place.push_back({ &clips[i], tl.starts[i] });
     AnimPrepResult res;
-    PrepAnimation(place, *set, tg.info, UnitsPerMeter(), res, 1.0 / fps);
+    PrepAnimation(place, *set, tg.info, UnitsPerMeter(), res, append ? 0.0 : 1.0 / fps, true);
 
     if (GetFrameRate() != fps && TIME_TICKSPERSEC % fps == 0) SetFrameRate(fps);
     theHold.Suspend();
@@ -212,15 +281,18 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     size_t keys = 0, flips = 0;
     for (const BoneKeys& bk : res.keys) {
         INode* n = tg.bones[static_cast<size_t>(bk.bone)];
-        Control* rot = nullptr;
-        Control* pos = nullptr;
-        if (!FreshControllers(ip, n, rot, pos)) continue;
+        Control* tm = n->GetTMController();
+        Control* rot = tm ? tm->GetRotationController() : nullptr;
+        Control* pos = tm ? tm->GetPositionController() : nullptr;
         Quat q;
         Point3 p;
-        ToMaxKey(bk.local.front(), q, p);
-        rot->SetValue(0, &q, 1, CTRL_ABSOLUTE);     // base value, outside animate mode
-        pos->SetValue(0, &p, 1, CTRL_ABSOLUTE);
-        if (bk.times.size() < 2 && !timeline) continue;
+        const bool keep = append && IsLinear(rot, true) && IsLinear(pos, false);   // earlier clips stay
+        if (!keep) {
+            if (!FreshControllers(ip, n, rot, pos)) continue;
+            ToMaxKey(bk.local.front(), q, p);
+            rot->SetValue(0, &q, 1, CTRL_ABSOLUTE);     // base value, outside animate mode
+            pos->SetValue(0, &p, 1, CTRL_ABSOLUTE);
+        }
         AnimMode mode;
         Quat prev;
         for (size_t i = 0; i < bk.times.size(); ++i) {
@@ -235,41 +307,33 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     }
     ResumeAnimate();
 
-    // Clip names on a note track - on the scene root, where WhiteoutDex (and NeoDex) read
-    // their sequences: two keys with the same value "Name" mark start and end. Also on the
-    // skeleton helper, where they are easy to find in the Dope Sheet.
-    for (INode* holder : { ip->GetRootNode(), tg.helper }) {
-        if (!holder) continue;
-        for (int i = holder->NumNoteTracks() - 1; i >= 0; --i) holder->DeleteNoteTrack(holder->GetNoteTrack(i), TRUE);
-        DefNoteTrack* nt = static_cast<DefNoteTrack*>(NewDefaultNoteTrack());
-        if (!nt) continue;
-        for (size_t i = 0; i < clips.size(); ++i) {
-            const MSTR name = M("\"" + clips[i].name + "\"");
-            const TimeValue t0 = static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC));
-            const TimeValue t1 = std::max<TimeValue>(t0 + GetTicksPerFrame(),
-                                                     static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)));
-            NoteKey* a = new NoteKey(t0, name, 0);
-            NoteKey* b = new NoteKey(t1, name, 0);
-            nt->keys.Append(1, &a);
-            nt->keys.Append(1, &b);
-        }
-        holder->AddNoteTrack(nt);
+    // names on note tracks: the helper (Dope Sheet) and the scene root (WhiteoutDex sequences)
+    for (size_t i = 0; i < clips.size(); ++i) {
+        Loaded l;
+        l.name = clips[i].name;
+        l.t0 = static_cast<TimeValue>(std::lround(tl.starts[i] * TIME_TICKSPERSEC));
+        l.t1 = std::max<TimeValue>(l.t0 + GetTicksPerFrame(), static_cast<TimeValue>(std::lround((tl.starts[i] + clips[i].duration) * TIME_TICKSPERSEC)));
+        loaded.push_back(l);
     }
-    const TimeValue end = std::max<TimeValue>(GetTicksPerFrame(), static_cast<TimeValue>(std::lround(res.end * TIME_TICKSPERSEC)));
+    PublishLoaded(tg.helper, loaded);
+    TimeValue end = GetTicksPerFrame();
+    for (const Loaded& l : loaded) end = std::max(end, l.t1);
     ip->SetAnimRange(Interval(0, end));
     ip->EnableSceneRedraw();
     theHold.Resume();
-    ip->SetTime(now);
+    ip->SetTime(startT);
     ip->RedrawViews(ip->GetTime());
 
-    std::string r = Format("%zu clip(s) on \"%s\": %zu bones keyed, %zu keys, %.2f s (%d fps)", clips.size(),
-                           U(tg.helper->GetName()).c_str(), res.keys.size(), keys, res.end, fps);
-    if (now > 0) r += Format(", from frame %d (rest pose before)", static_cast<int>(now / GetTicksPerFrame()));
+    const int tpf = GetTicksPerFrame();
+    std::string r = Format("%zu clip(s) on \"%s\": %zu bones keyed, %zu keys, frames %d-%d (%d fps)", clips.size(),
+                           U(tg.helper->GetName()).c_str(), res.keys.size(), keys, static_cast<int>(startT / tpf),
+                           static_cast<int>(loaded.back().t1 / tpf), fps);
     if (clips.size() == 1) r = "\"" + clips[0].name + "\" " + r;
+    if (append) r += Format("\nadded after the %zu clip(s) already loaded", loaded.size() - clips.size());
+    else if (startT > 0) r += "\nrest pose before the clip";
     if (!res.unmatched.empty()) r += Format("\n%zu animated bones not on the skeleton: ", res.unmatched.size()) + Join(res.unmatched, ", ");
     if (res.scaleTracks) r += Format("\n%zu tracks with scale (not applied)", res.scaleTracks);
     if (tg.bones.size() > tg.own) r += Format("\n%zu bones of the weapon animated too", tg.bones.size() - tg.own);
-    r += "\nClip names: note track of the scene root (WhiteoutDex sequences) and of " + U(tg.helper->GetName()) + " (Dope Sheet).";
     Log("%s (sign flips %zu)", r.c_str(), flips);
     return W(r);
 }
@@ -345,11 +409,60 @@ std::wstring ResetPose(int rig) {
         pos->SetValue(0, &p, 1, CTRL_ABSOLUTE);
     }
     ResumeAnimate();
-    for (int i = tg.helper->NumNoteTracks() - 1; i >= 0; --i) tg.helper->DeleteNoteTrack(tg.helper->GetNoteTrack(i), TRUE);
+    PublishLoaded(tg.helper, {});
     ip->EnableSceneRedraw();
     theHold.Resume();
     ip->RedrawViews(ip->GetTime());
     return W(Format("rest pose restored on %zu bones", tg.bones.size()));
+}
+
+std::wstring ListLoaded(int rig) {
+    std::string err;
+    Target tg;
+    if (!FindTarget(rig, tg, err)) return W("ERROR\t" + err);
+    const int tpf = GetTicksPerFrame();
+    std::string out;
+    for (const Loaded& l : ReadLoaded(tg.helper)) {
+        if (!out.empty()) out += "\n";
+        out += l.name + Format("\t%d\t%d", static_cast<int>(l.t0 / tpf), static_cast<int>(l.t1 / tpf));
+    }
+    return W(out);
+}
+
+std::wstring DeleteLoaded(int rig, int index) {
+    StartLog("delete clip");
+    Interface* ip = GetCOREInterface();
+    std::string err;
+    Target tg;
+    if (!FindTarget(rig, tg, err)) return W("ERROR\t" + err);
+    std::vector<Loaded> loaded = ReadLoaded(tg.helper);
+    if (index < 0 || static_cast<size_t>(index) >= loaded.size()) return W(std::string("ERROR\tpick a loaded clip"));
+    const Loaded gone = loaded[static_cast<size_t>(index)];
+    loaded.erase(loaded.begin() + index);
+    theHold.Suspend();
+    ip->DisableSceneRedraw();
+    SuspendAnimate();
+    // the clip's keys go; the time is not closed up, the other clips stay where they are
+    const Interval iv(gone.t0, gone.t1);
+    for (INode* b : tg.bones) {
+        Control* tm = b->GetTMController();
+        if (!tm) continue;
+        for (Control* c : { tm->GetRotationController(), tm->GetPositionController() })
+            if (c) c->DeleteTime(iv, TIME_INCLEFT | TIME_INCRIGHT | TIME_NOSLIDE);
+    }
+    ResumeAnimate();
+    PublishLoaded(tg.helper, loaded);
+    TimeValue end = GetTicksPerFrame() * 100;
+    if (!loaded.empty()) { end = GetTicksPerFrame(); for (const Loaded& l : loaded) end = std::max(end, l.t1); }
+    ip->SetAnimRange(Interval(0, end));
+    ip->EnableSceneRedraw();
+    theHold.Resume();
+    ip->SetTime(loaded.empty() ? 0 : loaded.back().t0);
+    ip->RedrawViews(ip->GetTime());
+    const std::string r = "\"" + gone.name + Format("\" removed (frames %d-%d), %zu clip(s) left", static_cast<int>(gone.t0 / GetTicksPerFrame()),
+                                                     static_cast<int>(gone.t1 / GetTicksPerFrame()), loaded.size());
+    Log("%s", r.c_str());
+    return W(r);
 }
 
 } // namespace cp77max

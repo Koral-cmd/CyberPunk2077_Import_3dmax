@@ -73,7 +73,7 @@ inline int GetFrameRate() { return 30; }
 inline void SetFrameRate(int) {}
 inline int GetTicksPerFrame() { return 160; }
 
-class Class_ID { public: Class_ID() {} Class_ID(ULONG a, ULONG b) : a_(a), b_(b) {} private: ULONG a_ = 0, b_ = 0; };
+class Class_ID { public: Class_ID() {} Class_ID(ULONG a, ULONG b) : a_(a), b_(b) {} bool operator==(const Class_ID& o) const { return a_ == o.a_ && b_ == o.b_; } private: ULONG a_ = 0, b_ = 0; };
 typedef ULONG SClass_ID;
 #define GEOMOBJECT_CLASS_ID ((SClass_ID)0x10)
 #define HELPER_CLASS_ID ((SClass_ID)0xFC0)

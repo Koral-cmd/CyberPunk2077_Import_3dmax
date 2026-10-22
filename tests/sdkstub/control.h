@@ -8,4 +8,9 @@ public:
     virtual BOOL SetRotationController(Control*) { return TRUE; }
     virtual Control* GetPositionController() { return nullptr; }
     virtual Control* GetRotationController() { return nullptr; }
+    virtual Class_ID ClassID() { return Class_ID(); }
+    virtual void DeleteTime(Interval, DWORD) {}
 };
+#define TIME_INCLEFT  (1 << 10)
+#define TIME_INCRIGHT (1 << 11)
+#define TIME_NOSLIDE  (1 << 12)

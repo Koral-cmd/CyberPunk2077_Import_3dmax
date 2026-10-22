@@ -68,7 +68,7 @@ public:
         fn_version, fn_getSetting, fn_setSetting, fn_settingsPath, fn_logPath,
         fn_buildIndex, fn_indexCount, fn_search, fn_appearances,
         fn_importCharacter, fn_importJson,
-        fn_listRigs, fn_clips, fn_applyClip, fn_applyAll, fn_resetPose
+        fn_listRigs, fn_clips, fn_applyClip, fn_applyAll, fn_resetPose, fn_listLoaded, fn_deleteLoaded
     };
 
     const MCHAR* version() { return keep(cp77max::Version()); }
@@ -89,6 +89,8 @@ public:
     const MCHAR* applyClip(const MCHAR* a, const MCHAR* c, int rig) { return keep(cp77max::ApplyClip(s(a), s(c), rig)); }
     const MCHAR* applyAll(const MCHAR* a, const MCHAR* f, int rig) { return keep(cp77max::ApplyAll(s(a), s(f), rig)); }
     const MCHAR* resetPose(int rig) { return keep(cp77max::ResetPose(rig)); }
+    const MCHAR* listLoaded(int rig) { return keep(cp77max::ListLoaded(rig)); }
+    const MCHAR* deleteLoaded(int rig, int index) { return keep(cp77max::DeleteLoaded(rig, index)); }
 
     DECLARE_DESCRIPTOR(CP77FP)
     BEGIN_FUNCTION_MAP
@@ -108,6 +110,8 @@ public:
         FN_3(fn_applyClip, TYPE_STRING, applyClip, TYPE_STRING, TYPE_STRING, TYPE_INT)
         FN_3(fn_applyAll, TYPE_STRING, applyAll, TYPE_STRING, TYPE_STRING, TYPE_INT)
         FN_1(fn_resetPose, TYPE_STRING, resetPose, TYPE_INT)
+        FN_1(fn_listLoaded, TYPE_STRING, listLoaded, TYPE_INT)
+        FN_2(fn_deleteLoaded, TYPE_STRING, deleteLoaded, TYPE_INT, TYPE_INT)
     END_FUNCTION_MAP
 
 private:
@@ -155,6 +159,11 @@ static CP77FP theCP77FP(
         _T("rig"), 0, TYPE_INT,
     CP77FP::fn_resetPose, _T("resetPose"), 0, TYPE_STRING, 0, 1,
         _T("rig"), 0, TYPE_INT,
+    CP77FP::fn_listLoaded, _T("listLoaded"), 0, TYPE_STRING, 0, 1,
+        _T("rig"), 0, TYPE_INT,
+    CP77FP::fn_deleteLoaded, _T("deleteLoaded"), 0, TYPE_STRING, 0, 2,
+        _T("rig"), 0, TYPE_INT,
+        _T("index"), 0, TYPE_INT,
     p_end);
 
 __declspec(dllexport) const TCHAR* LibDescription() {

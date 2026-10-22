@@ -21,7 +21,7 @@ double MatchRatio(const Clip& clip, const std::vector<TargetBone>& target, size_
 }
 
 void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
-                   const std::vector<TargetBone>& target, double s, AnimPrepResult& out, double leadIn) {
+                   const std::vector<TargetBone>& target, double s, AnimPrepResult& out, double leadIn, bool closeEnds) {
     out = AnimPrepResult();
     std::map<std::string, int> index;
     for (size_t i = 0; i < target.size(); ++i) index.emplace(target[i].name, static_cast<int>(i));
@@ -70,7 +70,7 @@ void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
             if (has[b]) continue;
             const Xf r = rest(b);
             push(b, cp.start, r);
-            if (c.duration > kTick && clips.size() > 1) push(b, cp.start + c.duration, r);
+            if (c.duration > kTick && (clips.size() > 1 || closeEnds)) push(b, cp.start + c.duration, r);
         }
         for (const auto& tr : c.tracks) {
             auto it = index.find(tr.joint);
@@ -83,7 +83,7 @@ void PrepAnimation(const std::vector<ClipPlacement>& clips, const AnimSet& set,
                 push(b, t, m);
             }
             // keep the last pose to the end of the clip when the track stops early
-            if (!tr.times.empty() && clips.size() > 1 && tr.times.back() + kTick < c.duration)
+            if (!tr.times.empty() && (clips.size() > 1 || closeEnds) && tr.times.back() + kTick < c.duration)
                 push(b, cp.start + c.duration, ScaledTranslation(tr.local.back(), s));
         }
         out.end = std::max(out.end, cp.start + c.duration);

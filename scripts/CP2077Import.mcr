@@ -256,7 +256,7 @@ macroScript CP2077Import_Anim
         (
             global cp77AnimRoll
             try (destroyDialog cp77AnimRoll) catch ()
-            rollout cp77AnimRoll "CP2077 Animations" width:540 height:720
+            rollout cp77AnimRoll "CP2077 Animations" width:540 height:900
             (
                 local rigs = #()      -- #(handle, name, owner, entity, #(animsets))
                 local clipNames = #()
@@ -311,16 +311,39 @@ macroScript CP2077Import_Anim
                     button btClips "List clips" width:120 across:2
                     label lbInfo "" align:#left width:360
                     dotNetControl lbClips "System.Windows.Forms.ListBox" width:510 height:170
-                    button btOne "Load selected clip" width:160 across:3 tooltip:"Starts at the current frame of the time slider; before it the rest pose is kept. Double-click a clip does the same"
+                    button btOne "Add selected clip" width:160 across:3 tooltip:"Added after the clips already loaded (the first one starts at the time slider, rest pose before it). Double-click a clip does the same"
                     edittext edClipFilter "Filter" fieldWidth:110
-                    button btAll "Load all (filtered)" width:160 tooltip:"All clips one after another, names on the helper's note track"
+                    button btAll "Load all (filtered)" width:160 tooltip:"Replaces everything: all clips one after another"
                     spinner spGap "Gap between clips (frames)" range:[0,1000,10] type:#integer fieldWidth:50 across:2 align:#left
-                    button btReset "Back to rest pose" width:140 align:#right
+                    button btReset "Back to rest pose" width:140 align:#right tooltip:"Removes every loaded clip"
+                )
+                group "Loaded clips (double-click = play only that clip)"
+                (
+                    dotNetControl lbLoaded "System.Windows.Forms.ListBox" width:510 height:110
+                    button btPreview "Play selected" width:120 across:3
+                    button btShowAll "Whole timeline" width:120
+                    button btDelete "Delete selected" width:120 tooltip:"Removes that clip's keys; the others stay where they are"
                 )
                 edittext edReport "" height:100 readOnly:true
 
                 fn rigHandle = (
                     if (ddRig.selection < 1 or ddRig.selection > rigs.count) then 0 else rigs[ddRig.selection][1]
+                )
+                local loadedClips = #()   -- #(name, startFrame, endFrame)
+                fn refreshLoaded = (
+                    loadedClips = #()
+                    local items = #()
+                    local r = CP77Cpp.listLoaded (rigHandle())
+                    if not (isError r) then (
+                        for l in (splitLines r) do (
+                            local f = filterString l "\t" splitEmptyTokens:true
+                            if f.count >= 3 then (
+                                append loadedClips #(f[1], (f[2] as integer), (f[3] as integer))
+                                append items (f[1] + "    [" + f[2] + " - " + f[3] + "]")
+                            )
+                        )
+                    )
+                    setItems lbLoaded items
                 )
                 fn showSets = (
                     if (rbSrc.state == 1) then (
@@ -344,6 +367,7 @@ macroScript CP2077Import_Anim
                     ddRig.items = items
                     if items.count > 0 then ddRig.selection = 1
                     showSets()
+                    refreshLoaded()
                     report (if rigs.count == 0 then "No imported skeleton in the scene - use CP2077 Import first." else (rigs.count as string + " skeleton(s) in the scene"))
                 )
                 fn listClips setPath = (
@@ -371,10 +395,20 @@ macroScript CP2077Import_Anim
                 fn syncWhiteoutDex = (
                     if (globalVars.isGlobal #WdxSequenceStorage) and (WdxSequenceStorage != undefined) then (
                         try (
-                            local n = WdxSequenceStorage.migrateFromNoteTracks removeTracks:true
+                            local n = 0
+                            if (numNoteTracks rootNode) == 0 then WdxSequenceStorage.clearCA()
+                            else n = WdxSequenceStorage.migrateFromNoteTracks removeTracks:true
                             report (edReport.text + "\nWhiteoutDex: " + (n as string) + " sequence(s)")
                         ) catch (report (edReport.text + "\nWhiteoutDex sequences not updated: " + getCurrentException()))
                     )
+                )
+                fn playLoaded = (
+                    local i = selIndex lbLoaded
+                    if (i < 1 or i > loadedClips.count) then (report "Pick a loaded clip."; return ok)
+                    local c = loadedClips[i]
+                    animationRange = interval c[2] (amax (c[2] + 1) c[3])
+                    sliderTime = c[2]
+                    playAnimation immediateReturn:true
                 )
                 fn applyOne = (
                     local i = selIndex lbClips
@@ -382,18 +416,20 @@ macroScript CP2077Import_Anim
                     busy ("loading " + clipNames[i])
                     report (CP77Cpp.applyClip currentSet clipNames[i] (rigHandle()))
                     syncWhiteoutDex()
+                    refreshLoaded()
                     completeRedraw()
                 )
 
                 on cp77AnimRoll open do (
                     styleList lbSets
                     styleList lbClips
+                    styleList lbLoaded
                     local g = CP77Cpp.getSetting "GapFrames"
                     if g != "" then spGap.value = (g as integer)
                     loadRigs()
                 )
                 on btRigs pressed do loadRigs()
-                on ddRig selected i do showSets()
+                on ddRig selected i do (showSets(); refreshLoaded())
                 on rbSrc changed s do showSets()
                 on btFind pressed do (rbSrc.state = 2; showSets())
                 on edFilter entered t do (rbSrc.state = 2; showSets())
@@ -411,10 +447,30 @@ macroScript CP2077Import_Anim
                     busy "loading all clips"
                     report (CP77Cpp.applyAll currentSet edClipFilter.text (rigHandle()))
                     syncWhiteoutDex()
+                    refreshLoaded()
                     completeRedraw()
                 )
                 on btReset pressed do (
                     report (CP77Cpp.resetPose (rigHandle()))
+                    syncWhiteoutDex()
+                    refreshLoaded()
+                    completeRedraw()
+                )
+                on lbLoaded DoubleClick sender args do playLoaded()
+                on btPreview pressed do playLoaded()
+                on btShowAll pressed do (
+                    stopAnimation()
+                    local e = 0
+                    for c in loadedClips do e = amax e c[3]
+                    animationRange = interval 0 (amax 1 e)
+                )
+                on btDelete pressed do (
+                    local i = selIndex lbLoaded
+                    if (i < 1 or i > loadedClips.count) then (report "Pick a loaded clip."; return ok)
+                    stopAnimation()
+                    report (CP77Cpp.deleteLoaded (rigHandle()) (i - 1))
+                    syncWhiteoutDex()
+                    refreshLoaded()
                     completeRedraw()
                 )
             )
