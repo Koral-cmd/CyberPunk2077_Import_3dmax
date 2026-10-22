@@ -28,6 +28,7 @@ public:
     static constexpr const char* Textures       = "Textures";        // 1 = materials with textures
     static constexpr const char* NormalFlipGreen= "NormalFlipGreen"; // 1 = invert normal map green
     static constexpr const char* Decals         = "Decals";          // 0 = leave decal parts out
+    static constexpr const char* MaterialType   = "MaterialType";    // Physical (default) | Standard
     static constexpr const char* WeldVertices   = "WeldVertices";    // 1 = weld UV seams for smooth shading
     static constexpr const char* WeaponSlot     = "WeaponSlot";      // default slot for weapons
     static constexpr const char* GapFrames      = "GapFrames";       // between clips in "load all"

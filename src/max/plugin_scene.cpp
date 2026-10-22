@@ -138,8 +138,8 @@ struct MatSlot {
 };
 
 // Physical Material (what Max 2027 shows best in the viewport); Standard as fallback
-Mtl* TexturedMaterial(Interface* ip, const MatSlot& slot) {
-    Mtl* pm = static_cast<Mtl*>(ip->CreateInstance(MATERIAL_CLASS_ID, kPhysicalMtlClass));
+Mtl* TexturedMaterial(Interface* ip, const MatSlot& slot, bool physical) {
+    Mtl* pm = physical ? static_cast<Mtl*>(ip->CreateInstance(MATERIAL_CLASS_ID, kPhysicalMtlClass)) : nullptr;
     if (pm) {
         pm->SetName(M(slot.name));
         Texmap* d = MakeBitmap(slot.tex.diffuse, false, false);
@@ -152,7 +152,7 @@ Mtl* TexturedMaterial(Interface* ip, const MatSlot& slot) {
             }
             if (!slot.tex.opacity.empty()) SetParam(pm, _T("cutout_map"), MakeBitmap(slot.tex.opacity, false, true));
             pm->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED);
-            pm->SetMtlFlag(MTL_HW_MAT_ENABLED);      // realistic display: normal map and cut-out in the viewport
+            // only "shaded" display: a realistic-only material shows no maps in a Standard-quality viewport
             if (d) { d->SetMtlFlag(MTL_TEX_DISPLAY_ENABLED); ip->ActivateTexture(d, pm); }
             return pm;
         }
@@ -180,7 +180,7 @@ Mtl* TexturedMaterial(Interface* ip, const MatSlot& slot) {
 }
 
 Mtl* MakeMaterial(Interface* ip, const std::string& name, const std::vector<MatSlot>& subs, const std::string& keyPrefix,
-                  std::map<std::string, Mtl*>& cache, size_t& textured) {
+                  std::map<std::string, Mtl*>& cache, size_t& textured, bool physical) {
     auto one = [&](const MatSlot& slot) -> Mtl* {
         const bool tex = !slot.tex.diffuse.empty();
         // the same name means different textures in different meshes ("decals_all")
@@ -188,7 +188,7 @@ Mtl* MakeMaterial(Interface* ip, const std::string& name, const std::vector<MatS
         auto it = cache.find(key);
         if (it != cache.end()) return it->second;
         Mtl* m = nullptr;
-        if (tex) { m = TexturedMaterial(ip, slot); if (m) ++textured; }
+        if (tex) { m = TexturedMaterial(ip, slot, physical); if (m) ++textured; }
         if (!m) {
             StdMat2* s = NewDefaultStdMat();
             if (!s) return nullptr;
@@ -363,6 +363,7 @@ std::wstring BuildScene(const ScenePlan& plan) {
     topt.outDir = JoinPath(st.cacheDir(), "_cp77_textures");
     topt.flipGreen = st.getBool(Settings::NormalFlipGreen, false);
     const bool decals = st.getBool(Settings::Decals, true);
+    const bool physical = !IEquals(st.get(Settings::MaterialType, "Physical"), "Standard");
     Log("units per metre %.4f, LOD %d, textures %s", opt.unitsPerMeter, opt.lod, textures ? "on" : "off");
 
     PrepScene scene;
@@ -494,7 +495,7 @@ std::wstring BuildScene(const ScenePlan& plan) {
             }
             slots.push_back(std::move(slot));
         }
-        Mtl* mtl = MakeMaterial(ip, prep.name + "_mtl", slots, pm.glb, mtlCache, textured);
+        Mtl* mtl = MakeMaterial(ip, prep.name + "_mtl", slots, pm.glb, mtlCache, textured, physical);
         if (mtl) { node->SetMtl(mtl); if (std::find(editorMtls.begin(), editorMtls.end(), mtl) == editorMtls.end()) editorMtls.push_back(mtl); }
         if (!texNotes.empty()) texReport.push_back(prep.name + ": " + texNotes);
         maxLod = std::max(maxLod, prep.lodsAvailable.empty() ? 1 : prep.lodsAvailable.back());

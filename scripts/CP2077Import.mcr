@@ -91,12 +91,26 @@ macroScript CP2077Import_Open
                     spinner spLod "LOD (1 = full) " range:[1,8,1] type:#integer fieldWidth:40 across:3 align:#left tooltip:"2, 3 ... = lighter meshes, when the game has them (re-exports once)"
                     checkbox cbTex "Textures" checked:true tooltip:"Materials with the textures WolvenKit exported (multilayer colours are baked)"
                     checkbox cbFlipG "Flip normal green" checked:false
-                    checkbox cbDecals "Decals (logos, stickers)" checked:true
+                    checkbox cbDecals "Decals (logos, stickers)" checked:true across:2 align:#left
+                    dropdownlist ddMtl "" items:#("Physical Material", "Standard Material") width:150 align:#right
                 )
                 button btImport "Import" width:220 height:32
                 button btJson "Import a WolvenKit project file (.ent.json) ..." width:300
                 edittext edReport "" height:120 readOnly:true
 
+                -- the "Show Shaded Material in Viewport" button for every imported textured material
+                fn showMapsInViewport = (
+                    for o in geometry where o.material != undefined do (
+                        local m = o.material
+                        local subs = (if classOf m == Multimaterial then m.materialList else #(m))
+                        for s in subs where s != undefined do (
+                            try (
+                                if (hasProperty s #base_color_map) and s.base_color_map != undefined then showTextureMap s s.base_color_map true
+                                else if (hasProperty s #diffuseMap) and s.diffuseMap != undefined then showTextureMap s s.diffuseMap true
+                            ) catch ()
+                        )
+                    )
+                )
                 fn fillApps ent dd = (
                     dd.items = #()
                     if (ent == undefined or ent == "") then return ok
@@ -134,6 +148,7 @@ macroScript CP2077Import_Open
                     cbTex.checked = (CP77Cpp.getSetting "Textures") != "0"
                     cbFlipG.checked = (CP77Cpp.getSetting "NormalFlipGreen") == "1"
                     cbDecals.checked = (CP77Cpp.getSetting "Decals") != "0"
+                    ddMtl.selection = (if (CP77Cpp.getSetting "MaterialType") == "Standard" then 2 else 1)
                     styleList lbChars
                     styleList lbWeaps
                     local n = CP77Cpp.indexCount()
@@ -197,9 +212,11 @@ macroScript CP2077Import_Open
                     CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
                     CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
                     CP77Cpp.setSetting "Decals" (if cbDecals.checked then "1" else "0")
+                    CP77Cpp.setSetting "MaterialType" (if ddMtl.selection == 2 then "Standard" else "Physical")
                     busy ("importing " + ent)
                     local r = CP77Cpp.importCharacter ent app wEnt wApp edSlot.text
                     report r
+                    showMapsInViewport()
                     completeRedraw()
                 )
                 on btJson pressed do (
@@ -207,10 +224,12 @@ macroScript CP2077Import_Open
                     CP77Cpp.setSetting "Textures" (if cbTex.checked then "1" else "0")
                     CP77Cpp.setSetting "NormalFlipGreen" (if cbFlipG.checked then "1" else "0")
                     CP77Cpp.setSetting "Decals" (if cbDecals.checked then "1" else "0")
+                    CP77Cpp.setSetting "MaterialType" (if ddMtl.selection == 2 then "Standard" else "Physical")
                     local p = getOpenFileName caption:"Entity exported by WolvenKit (.ent.json)" types:"Entity JSON (*.ent.json)|*.ent.json|JSON (*.json)|*.json|"
                     if p != undefined then (
                         busy ("importing " + p)
                         report (CP77Cpp.importJson p)
+                        showMapsInViewport()
                         completeRedraw()
                     )
                 )
