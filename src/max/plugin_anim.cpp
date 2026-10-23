@@ -213,6 +213,19 @@ bool IsLinear(Control* c, bool rotation) {
     return c && c->ClassID() == Class_ID(rotation ? LININTERP_ROTATION_CLASS_ID : LININTERP_POSITION_CLASS_ID, 0);
 }
 
+TimeValue LastKey(const Target& tg) {
+    TimeValue last = 0;
+    for (INode* b : tg.bones) {
+        Control* tm = b->GetTMController();
+        if (!tm) continue;
+        for (Control* c : { tm->GetRotationController(), tm->GetPositionController() }) {
+            const int n = c ? c->NumKeys() : 0;
+            if (n > 0) last = std::max(last, c->GetKeyTime(n - 1));
+        }
+    }
+    return last;
+}
+
 struct AnimMode {
     AnimMode() { AnimateOn(); }
     ~AnimMode() { AnimateOff(); }
@@ -261,10 +274,12 @@ std::wstring Apply(const std::string& anims, const std::vector<size_t>& clipIdx,
     const TimeValue now = std::max<TimeValue>(0, ip->GetTime());
     TimeValue startT = now;    // first clip: at the time slider, rest pose before it
     if (append) {
-        TimeValue lastEnd = 0;
-        for (const Loaded& l : loaded) lastEnd = std::max(lastEnd, l.t1);
-        startT = std::max(now, lastEnd + static_cast<TimeValue>(std::lround(gapS * TIME_TICKSPERSEC)));
-        startT -= startT % GetTicksPerFrame();
+        // after the last key actually on the skeleton (the user may have moved or squeezed
+        // the clips in the Dope Sheet); the recorded clip ends only when there are no keys
+        TimeValue lastEnd = LastKey(tg);
+        if (lastEnd <= 0) for (const Loaded& l : loaded) lastEnd = std::max(lastEnd, l.t1);
+        startT = lastEnd + static_cast<TimeValue>(std::lround(gapS * TIME_TICKSPERSEC));
+        startT += (GetTicksPerFrame() - startT % GetTicksPerFrame()) % GetTicksPerFrame();
         if (startT <= lastEnd) startT = lastEnd + GetTicksPerFrame();
     }
     const double offset = static_cast<double>(startT) / TIME_TICKSPERSEC;
@@ -429,6 +444,28 @@ std::wstring ListLoaded(int rig) {
         out += l.name + Format("\t%d\t%d", static_cast<int>(l.t0 / tpf), static_cast<int>(l.t1 / tpf));
     }
     return W(out);
+}
+
+std::wstring SetLoaded(int rig, const std::wstring& text) {
+    std::string err;
+    Target tg;
+    if (!FindTarget(rig, tg, err)) return W("ERROR\t" + err);
+    const int tpf = GetTicksPerFrame();
+    std::vector<Loaded> loaded;
+    for (const std::string& line : Split(Narrow(text), '\n')) {
+        const auto f = Split(Trim(line), '\t');
+        if (f.size() < 3 || f[0].empty()) continue;
+        double a = 0, b = 0;
+        if (!ParseDouble(f[1], a) || !ParseDouble(f[2], b)) continue;
+        Loaded l;
+        l.name = f[0];
+        l.t0 = static_cast<TimeValue>(std::lround(a)) * tpf;
+        l.t1 = std::max<TimeValue>(l.t0 + tpf, static_cast<TimeValue>(std::lround(b)) * tpf);
+        loaded.push_back(l);
+    }
+    std::sort(loaded.begin(), loaded.end(), [](const Loaded& x, const Loaded& y) { return x.t0 < y.t0; });
+    WriteLoaded(tg.helper, loaded);
+    return W(Format("%zu clip(s)", loaded.size()));
 }
 
 std::wstring DeleteLoaded(int rig, int index) {

@@ -329,8 +329,65 @@ macroScript CP2077Import_Anim
                 fn rigHandle = (
                     if (ddRig.selection < 1 or ddRig.selection > rigs.count) then 0 else rigs[ddRig.selection][1]
                 )
+                -- WhiteoutDex keeps sequences in custom attributes on the scene root. They are the
+                -- truth when present: the user may move, squeeze or rename them there.
+                fn wdxOn = (try ((globalVars.isGlobal #WdxSequenceStorage) and (WdxSequenceStorage != undefined)) catch (false))
+                fn wdxCount = (try (rootNode.seqNames.count) catch (0))
+                fn pullWdx = (     -- WhiteoutDex -> the plugin's record
+                    if (wdxOn()) and (wdxCount()) > 0 then (
+                        local txt = ""
+                        for i = 1 to rootNode.seqNames.count do
+                            txt += rootNode.seqNames[i] + "\t" + (rootNode.startFrames[i] as string) + "\t" + (rootNode.endFrames[i] as string) + "\n"
+                        CP77Cpp.setLoaded (rigHandle()) txt
+                    )
+                )
+                fn pushWdx = (     -- the plugin's record -> WhiteoutDex; settings of kept sequences stay
+                    if not (wdxOn()) then return ok
+                    try (
+                        WdxSequenceStorage.ensureCA()
+                        local rec = #()
+                        local r = CP77Cpp.listLoaded (rigHandle())
+                        if not (isError r) then (
+                            for l in (splitLines r) do (
+                                local f = filterString l "\t" splitEmptyTokens:true
+                                if f.count >= 3 then append rec #(f[1], (f[2] as integer), (f[3] as integer))
+                            )
+                        )
+                        for i = rootNode.seqNames.count to 1 by -1 do (
+                            local keepIt = false
+                            for c in rec where c[1] == rootNode.seqNames[i] and c[2] == rootNode.startFrames[i] do keepIt = true
+                            if not keepIt then (
+                                try (deleteItem rootNode.seqNames i) catch ()
+                                try (deleteItem rootNode.startFrames i) catch ()
+                                try (deleteItem rootNode.endFrames i) catch ()
+                                try (deleteItem rootNode.nonLooping i) catch ()
+                                try (deleteItem rootNode.rarity i) catch ()
+                                try (deleteItem rootNode.moveSpeed i) catch ()
+                                try (deleteItem rootNode.seqExtents i) catch ()
+                                try (deleteItem rootNode.sharedGroup i) catch ()
+                            )
+                        )
+                        for c in rec do (
+                            local found = false
+                            for i = 1 to rootNode.seqNames.count where rootNode.seqNames[i] == c[1] and rootNode.startFrames[i] == c[2] do found = true
+                            if not found then (
+                                append rootNode.seqNames c[1]
+                                append rootNode.startFrames c[2]
+                                append rootNode.endFrames c[3]
+                                append rootNode.nonLooping false
+                                append rootNode.rarity 0.0
+                                append rootNode.moveSpeed 0.0
+                                try (append rootNode.seqExtents "") catch ()
+                                try (append rootNode.sharedGroup "") catch ()
+                            )
+                        )
+                        -- the root note track was only the hand-over
+                        while (numNoteTracks rootNode) != 0 do deleteNoteTrack rootNode (getNoteTrack rootNode 1)
+                    ) catch (report (edReport.text + "\nWhiteoutDex sequences not updated: " + getCurrentException()))
+                )
                 local loadedClips = #()   -- #(name, startFrame, endFrame)
                 fn refreshLoaded = (
+                    pullWdx()
                     loadedClips = #()
                     local items = #()
                     local r = CP77Cpp.listLoaded (rigHandle())
@@ -390,34 +447,13 @@ macroScript CP2077Import_Anim
                     lbInfo.text = (clipNames.count as string + " clips, " + (formattedPrint total format:".1f") + " s in total")
                     report ("Animset " + setPath)
                 )
-                -- WhiteoutDex keeps sequences in custom attributes on the scene root: rebuild
-                -- them from the root note track the plugin just wrote
-                fn syncWhiteoutDex = (
-                    if (globalVars.isGlobal #WdxSequenceStorage) and (WdxSequenceStorage != undefined) then (
-                        try (
-                            local n = 0
-                            if (numNoteTracks rootNode) == 0 then WdxSequenceStorage.clearCA()
-                            else n = WdxSequenceStorage.migrateFromNoteTracks removeTracks:true
-                            report (edReport.text + "\nWhiteoutDex: " + (n as string) + " sequence(s)")
-                        ) catch (report (edReport.text + "\nWhiteoutDex sequences not updated: " + getCurrentException()))
-                    )
-                )
-                local savedRange = undefined     -- the user's time range while one clip is shown
-                fn playLoaded = (
-                    local i = selIndex lbLoaded
-                    if (i < 1 or i > loadedClips.count) then (report "Pick a loaded clip."; return ok)
-                    local c = loadedClips[i]
-                    if savedRange == undefined then savedRange = animationRange
-                    animationRange = interval c[2] (amax (c[2] + 1) c[3])
-                    sliderTime = c[2]
-                    playAnimation immediateReturn:true
-                )
                 fn applyOne = (
                     local i = selIndex lbClips
                     if (currentSet == "" or i < 1 or i > clipNames.count) then (report "List the clips and pick one."; return ok)
+                    pullWdx()
                     busy ("loading " + clipNames[i])
                     report (CP77Cpp.applyClip currentSet clipNames[i] (rigHandle()))
-                    syncWhiteoutDex()
+                    pushWdx()
                     refreshLoaded()
                     completeRedraw()
                 )
@@ -446,15 +482,16 @@ macroScript CP2077Import_Anim
                 on btAll pressed do (
                     if currentSet == "" then (report "List the clips first."; return ok)
                     CP77Cpp.setSetting "GapFrames" (spGap.value as string)
+                    pullWdx()
                     busy "loading all clips"
                     report (CP77Cpp.applyAll currentSet edClipFilter.text (rigHandle()))
-                    syncWhiteoutDex()
+                    pushWdx()
                     refreshLoaded()
                     completeRedraw()
                 )
                 on btReset pressed do (
                     report (CP77Cpp.resetPose (rigHandle()))
-                    syncWhiteoutDex()
+                    pushWdx()
                     refreshLoaded()
                     completeRedraw()
                 )
@@ -468,8 +505,9 @@ macroScript CP2077Import_Anim
                     local i = selIndex lbLoaded
                     if (i < 1 or i > loadedClips.count) then (report "Pick a loaded clip."; return ok)
                     stopAnimation()
+                    pullWdx()
                     report (CP77Cpp.deleteLoaded (rigHandle()) (i - 1))
-                    syncWhiteoutDex()
+                    pushWdx()
                     refreshLoaded()
                     completeRedraw()
                 )

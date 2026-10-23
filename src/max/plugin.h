@@ -52,6 +52,7 @@ std::wstring ApplyAll(const std::wstring& anims, const std::wstring& filter, int
 std::wstring ResetPose(int rigHandle);
 std::wstring ListLoaded(int rigHandle);              // "name\tstartFrame\tendFrame" per loaded clip
 std::wstring DeleteLoaded(int rigHandle, int index); // keys of that clip removed, the others stay
+std::wstring SetLoaded(int rigHandle, const std::wstring& lines);   // replace the record ("name\tstart\tend" frames)
 
 // Used by File -> Import (.ent.json)
 int ImportFromFile(const MCHAR* path, BOOL suppressPrompts);

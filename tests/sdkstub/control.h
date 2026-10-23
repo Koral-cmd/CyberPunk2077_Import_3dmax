@@ -10,6 +10,8 @@ public:
     virtual Control* GetRotationController() { return nullptr; }
     virtual Class_ID ClassID() { return Class_ID(); }
     virtual void DeleteTime(Interval, DWORD) {}
+    virtual int NumKeys() { return 0; }
+    virtual TimeValue GetKeyTime(int) { return 0; }
 };
 #define TIME_INCLEFT  (1 << 10)
 #define TIME_INCRIGHT (1 << 11)
