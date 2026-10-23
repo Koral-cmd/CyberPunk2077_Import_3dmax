@@ -155,7 +155,18 @@ bool AnimSet::clip(size_t index, Clip& out, std::string& error) const {
         tr.joint = jn->second;
         tr.hasT = nc.t.valid(); tr.hasR = nc.r.valid(); tr.hasS = nc.s.valid();
         if (!tr.hasT && !tr.hasR && !tr.hasS) continue;
-        tr.step = (tr.hasT && nc.t.mode == Curve::Step) || (tr.hasR && nc.r.mode == Curve::Step);
+        // STEP only when every channel that actually changes is STEP. WolvenKit writes a
+        // constant channel (one key) as STEP next to a LINEAR one - e.g. a fixed translation
+        // beside an animated rotation; holding that rotation made Adam Smasher's arms jerk.
+        {
+            bool anyMoving = false, allStep = true;
+            for (const Curve* c : { &nc.t, &nc.r, &nc.s }) {
+                if (!c->valid() || c->t.size() < 2) continue;
+                anyMoving = true;
+                if (c->mode != Curve::Step) allStep = false;
+            }
+            tr.step = anyMoving && allStep;
+        }
         std::vector<float> times;
         for (const Curve* c : { &nc.t, &nc.r, &nc.s })
             if (c->valid()) times.insert(times.end(), c->t.begin(), c->t.end());
