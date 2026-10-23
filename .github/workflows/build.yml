@@ -15,12 +15,16 @@ name: Build plugin
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       sdk_url:
         description: "Direct link to the 3ds Max 2027 SDK (.msi or .zip). Empty = find it automatically."
         required: false
         default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -119,3 +123,16 @@ jobs:
           name: CP2077Import-Max${{ env.MAX_YEAR }}
           path: dist/
           if-no-files-found: error
+
+      - name: Release (tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = "CP2077Import-Max$env:MAX_YEAR.zip"
+          Compress-Archive -Path dist/CP2077Import -DestinationPath $zip -Force
+          $notes = Get-Content -Raw -Encoding utf8 docs/RELEASE.md
+          $notes | Out-File -Encoding utf8 notes.md
+          gh release create $tag $zip --title "CP2077 Import $tag" --notes-file notes.md
