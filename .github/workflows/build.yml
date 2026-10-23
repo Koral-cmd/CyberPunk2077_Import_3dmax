@@ -124,15 +124,21 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-      - name: Release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # A release: push a tag v*, or a commit to main whose message contains [release]
+      # (the version then comes from package/CP2077Import/PackageContents.xml).
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
+          if (-not $tag.StartsWith("v")) {
+            $xml = [xml](Get-Content -Raw package/CP2077Import/PackageContents.xml)
+            $tag = "v" + $xml.ApplicationPackage.AppVersion
+          }
           $zip = "CP2077Import-Max$env:MAX_YEAR.zip"
           Compress-Archive -Path dist/CP2077Import -DestinationPath $zip -Force
           $notes = Get-Content -Raw -Encoding utf8 docs/RELEASE.md
           $notes | Out-File -Encoding utf8 notes.md
-          gh release create $tag $zip --title "CP2077 Import $tag" --notes-file notes.md
+          gh release create $tag $zip --title "CP2077 Import $tag" --notes-file notes.md --target $env:GITHUB_SHA

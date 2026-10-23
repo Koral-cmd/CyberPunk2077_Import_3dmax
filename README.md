@@ -149,7 +149,7 @@ entSlotComponent        ──►  WeaponRight → кость + смещение
 
 ## Сборка из исходников
 
-**GitHub Actions.** Workflow `Build plugin` собирает плагин для 3ds Max 2027 на Windows-сервере GitHub (SDK скачивается автоматически) при каждом push в `main`; результат — артефакт `CP2077Import-Max2027`. Тег `v*` дополнительно публикует релиз.
+**GitHub Actions.** Workflow `Build plugin` собирает плагин для 3ds Max 2027 на Windows-сервере GitHub (SDK скачивается автоматически) при каждом push в `main`; результат — артефакт `CP2077Import-Max2027`. Тег `v*` или коммит со словом `[release]` в сообщении дополнительно публикует релиз (версия — из `package/CP2077Import/PackageContents.xml`).
 
 **Локально.** Нужны 3ds Max SDK нужной версии и Visual Studio 2022/2026 (или Build Tools) с «Desktop development with C++». **`BUILD.bat`** найдёт установленные SDK, соберёт `CP2077Import.dlu` под каждую версию и `cp77probe.exe`, затем вызовет `INSTALL.bat`.
 - одна версия: `BUILD.bat 2025`;
